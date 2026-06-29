@@ -2,7 +2,10 @@ package multislogger
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,7 +40,9 @@ var ctxValueKeysToAdd = []contextKey{
 
 type MultiSlogger struct {
 	*slog.Logger
-	handlers []slog.Handler
+
+	handlers *atomic.Pointer[[]slog.Handler]
+	addMu    sync.Mutex // for handlers
 
 	// middlewares with state that must persist across rebuilds
 	dedupEngine *dedup.Engine
@@ -60,16 +65,26 @@ func New(h ...slog.Handler) *MultiSlogger {
 func NewWithDedup(duplicateLogWindow time.Duration, h ...slog.Handler) *MultiSlogger {
 	ms := &MultiSlogger{
 		// setting to fanout with no handlers is noop
-		Logger: slog.New(slogmulti.Fanout()),
-		stopCh: make(chan struct{}),
+		stopCh:   make(chan struct{}),
+		handlers: &atomic.Pointer[[]slog.Handler]{},
 	}
+	ms.handlers.Store(&[]slog.Handler{})
+	ms.AddHandler(h...)
 
 	// Initialize deduper once at construction; it will emit summaries using the
 	// downstream middleware 'next' observed during handling. Call Start(ctx)
 	// to begin its background maintenance lifecycle.
 	ms.dedupEngine = dedup.New(dedup.WithDuplicateLogWindow(duplicateLogWindow))
 
-	ms.AddHandler(h...)
+	ms.Logger = slog.New(
+		slogmulti.
+			Pipe(slogmulti.NewHandleInlineMiddleware(utcTimeMiddleware)).
+			Pipe(slogmulti.NewHandleInlineMiddleware(ctxValuesMiddleWare)).
+			Pipe(ms.dedupEngine.NewMiddleware()).
+			Pipe(slogmulti.NewHandleInlineMiddleware(reportedErrorMiddleware)).
+			Handler(newFanoutHandler(ms.handlers)),
+	)
+
 	return ms
 }
 
@@ -82,19 +97,11 @@ func NewNopLogger() *slog.Logger {
 // slog.Logger under the the hood, and overwrites old Logger memory address,
 // this means any attributes added with Logger.With will be lost
 func (m *MultiSlogger) AddHandler(handler ...slog.Handler) {
-	m.handlers = append(m.handlers, handler...)
-
-	// we have to rebuild the handler everytime because the slogmulti package we're
-	// using doesn't support adding handlers after the Fanout handler has been created
-	*m.Logger = *slog.New(
-		slogmulti.
-			Pipe(slogmulti.NewHandleInlineMiddleware(utcTimeMiddleware)).
-			Pipe(slogmulti.NewHandleInlineMiddleware(ctxValuesMiddleWare)).
-			Pipe(m.dedupEngine.NewMiddleware()).
-			Pipe(slogmulti.NewHandleInlineMiddleware(reportedErrorMiddleware)).
-			Handler(slogmulti.Fanout(m.handlers...)),
-	)
-
+	m.addMu.Lock()
+	defer m.addMu.Unlock()
+	handlers := *m.handlers.Load()
+	handlers = append(handlers, handler...)
+	m.handlers.Store(&handlers)
 }
 
 // Stop releases background resources owned by the multislogger, such as the
@@ -245,4 +252,60 @@ func reportedErrorMiddleware(ctx context.Context, record slog.Record, next func(
 	)
 
 	return next(ctx, record)
+}
+
+// A fanout handler which loads dynamic handlers from its internal list. As an implementation detail
+// of a MultiSlogger, it enables all children to inherit handlers dynamically.
+type fanoutHandler struct {
+	handlers *atomic.Pointer[[]slog.Handler] // shared with its MultiSlogger
+	attrs    []slog.Attr
+	group    string
+}
+
+func newFanoutHandler(handlers *atomic.Pointer[[]slog.Handler]) slog.Handler {
+	return fanoutHandler{
+		handlers: handlers,
+	}
+}
+
+func (fanoutHandler) Enabled(_ context.Context, _ slog.Level) bool {
+	return true
+}
+
+// Handle incoming logs, fanning out to dynamically sourced list of child handlers.
+// This is effectively slogmulti.Fanout, but sourced from a dynamic handler list with attributes
+// applied on-the-fly.
+func (f fanoutHandler) Handle(ctx context.Context, r slog.Record) error {
+	var errs []error
+	for _, h := range *f.handlers.Load() {
+		if h.Enabled(ctx, r.Level) {
+			if len(f.attrs) != 0 {
+				h = h.WithAttrs(f.attrs)
+			}
+			if f.group != "" {
+				h = h.WithGroup(f.group)
+			}
+			if err := h.Handle(ctx, r.Clone()); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (f fanoutHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return fanoutHandler{
+		handlers: f.handlers,
+		attrs:    append(slices.Clone(f.attrs), attrs...),
+		group:    f.group,
+	}
+}
+
+func (f fanoutHandler) WithGroup(name string) slog.Handler {
+	return fanoutHandler{
+		handlers: f.handlers,
+		attrs:    slices.Clone(f.attrs),
+		group:    name,
+	}
 }
