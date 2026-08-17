@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -20,6 +21,40 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// TestCalculateOsqueryPaths_SocketPathTooLong checks that we refuse a root directory deep
+// enough that osquery could not hand out an extension socket underneath it. Without this,
+// osquery binds the manager socket, waits out --extensions_timeout for a kolide_grpc
+// extension that can never register, then removes its own socket and exits.
+func TestCalculateOsqueryPaths_SocketPathTooLong(t *testing.T) {
+	t.Parallel()
+
+	runId := ulid.New()
+
+	// Build a root directory long enough that the manager socket fits but the suffixed
+	// extension socket does not.
+	shortestBadRootDirLength := maxExtensionSocketPathLength - extensionSocketSuffixLength - len("/osquery-.sock") - socketIdLength + 1
+	rootDir := "/" + strings.Repeat("a", shortestBadRootDirLength-1)
+
+	_, err := calculateOsqueryPaths(rootDir, types.DefaultEnrollmentID, runId, osqueryOptions{})
+	require.Error(t, err, "expected too-long root directory to be rejected")
+	require.Contains(t, err.Error(), "exceeds the maximum")
+
+	// One character shorter is fine.
+	_, err = calculateOsqueryPaths(rootDir[:len(rootDir)-1], types.DefaultEnrollmentID, runId, osqueryOptions{})
+	require.NoError(t, err)
+}
+
+// TestCalculateOsqueryPaths_CallerProvidedSocketPathTooLong checks that the same validation
+// applies to a socket path handed to us via WithExtensionSocketPath.
+func TestCalculateOsqueryPaths_CallerProvidedSocketPathTooLong(t *testing.T) {
+	t.Parallel()
+
+	_, err := calculateOsqueryPaths(t.TempDir(), types.DefaultEnrollmentID, ulid.New(), osqueryOptions{
+		extensionSocketPath: "/" + strings.Repeat("a", maxExtensionSocketPathLength),
+	})
+	require.Error(t, err, "expected too-long caller-provided socket path to be rejected")
+}
 
 func requirePgidMatch(t *testing.T, pid int) {
 	pgid, err := syscall.Getpgid(pid)

@@ -168,15 +168,34 @@ func runLauncher(ctx context.Context, cancel func(), multiSlogger, systemMultiSl
 	// Ensure permissions are correct, regardless of umask settings -- we use
 	// DirMode (0755) because the desktop processes that run as the user
 	// must be able to access the root directory as well.
+	//
+	// Chmod requires ownership of the directory, so this fails when launcher runs as an
+	// unprivileged user against a root-created install directory. That's recoverable --
+	// the mode we want is only needed so that user-context processes can read the
+	// directory -- so we log and carry on rather than refusing to start.
 	if err := os.Chmod(rootDirectory, fsutil.DirMode); err != nil {
-		return fmt.Errorf("chmodding root directory: %w", err)
+		slogger.Log(ctx, slog.LevelWarn,
+			"could not chmod root directory, proceeding anyway",
+			"path", rootDirectory,
+			"err", err,
+		)
 	}
 	if filepath.Dir(rootDirectory) == "/var/kolide-k2" {
 		// We need to ensure the same for the parent of the root directory, but we only
 		// want to do the same for Kolide-created directories.
 		if err := os.Chmod(filepath.Dir(rootDirectory), fsutil.DirMode); err != nil {
-			return fmt.Errorf("chmodding root directory parent: %w", err)
+			slogger.Log(ctx, slog.LevelWarn,
+				"could not chmod root directory parent, proceeding anyway",
+				"path", filepath.Dir(rootDirectory),
+				"err", err,
+			)
 		}
+	}
+	// The root directory does have to be writable, though -- everything from the launcher
+	// database to the osquery extension socket lives in it. Fail loudly and early here,
+	// rather than partway through startup with a less obvious error.
+	if err := agent.CheckDirWritable(rootDirectory); err != nil {
+		return fmt.Errorf("root directory %s is not writable by uid %d: %w", rootDirectory, os.Geteuid(), err)
 	}
 	startupSpan.AddEvent("root_directory_created")
 
@@ -409,7 +428,9 @@ func runLauncher(ctx context.Context, cancel func(), multiSlogger, systemMultiSl
 		// getOsqEnrollDetails has a 12-second timeout for performing the query, so we set our retry interval
 		// to slightly longer than that.
 		osquery.CollectAndSetEnrollmentDetails(ctx, slogger, k, 120*time.Second, 15*time.Second)
-		logShipper.Ping() // Let the logshipper know about the updated serial number
+		if logShipper != nil {
+			logShipper.Ping() // Let the logshipper know about the updated serial number
+		}
 	})
 
 	// init osquery instance history

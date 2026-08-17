@@ -730,10 +730,17 @@ type osqueryFilePaths struct {
 // unacceptable.
 func calculateOsqueryPaths(rootDirectory string, enrollmentId string, runId string, opts osqueryOptions) (*osqueryFilePaths, error) {
 
-	// Determine the path to the extension socket
+	// Determine the path to the extension socket. We use a truncated run ID here to keep
+	// the socket path short -- unix domain socket paths are capped well below PATH_MAX, and
+	// launcher root directories outside of /var (for instance, when launcher runs as an
+	// unprivileged user out of a home directory) leave little room for a full ULID.
 	extensionSocketPath := opts.extensionSocketPath
 	if extensionSocketPath == "" {
-		extensionSocketPath = SocketPath(rootDirectory, runId)
+		extensionSocketPath = SocketPath(rootDirectory, truncateSocketId(runId))
+	}
+
+	if err := validateExtensionSocketPath(extensionSocketPath); err != nil {
+		return nil, fmt.Errorf("cannot use extension socket: %w", err)
 	}
 
 	// We want to use a unique pidfile per launcher run to avoid file locking issues.
@@ -751,6 +758,19 @@ func calculateOsqueryPaths(rootDirectory string, enrollmentId string, runId stri
 	}
 
 	return osqueryFilePaths, nil
+}
+
+// socketIdLength is how much of the run ID we keep when naming the extension socket.
+// ULIDs end in randomness, so the tail is the distinguishing part.
+const socketIdLength = 8
+
+// truncateSocketId shortens the given run ID for use in the extension socket path.
+func truncateSocketId(runId string) string {
+	if len(runId) <= socketIdLength {
+		return runId
+	}
+
+	return runId[len(runId)-socketIdLength:]
 }
 
 // createOsquerydCommand uses osqueryOptions to return an *exec.Cmd

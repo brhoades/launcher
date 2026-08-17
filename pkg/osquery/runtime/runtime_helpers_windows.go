@@ -73,6 +73,12 @@ func SocketPath(rootDir string, id string) string {
 	return fmt.Sprintf(`\\.\pipe\kolide-osquery-%s`, id)
 }
 
+// validateExtensionSocketPath is a no-op on Windows -- named pipe paths are limited to
+// 256 characters, which SocketPath cannot exceed.
+func validateExtensionSocketPath(_ string) error {
+	return nil
+}
+
 func platformArgs() []string {
 	return []string{
 		"--allow_unsafe",

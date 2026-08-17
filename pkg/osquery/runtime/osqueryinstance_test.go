@@ -52,7 +52,40 @@ func TestCalculateOsqueryPaths(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		require.Equal(t, rootDir, filepath.Dir(paths.extensionSocketPath))
 	} else {
-		require.Equal(t, fmt.Sprintf(`\\.\pipe\kolide-osquery-%s`, runId), paths.extensionSocketPath)
+		require.Equal(t, fmt.Sprintf(`\\.\pipe\kolide-osquery-%s`, truncateSocketId(runId)), paths.extensionSocketPath)
+	}
+}
+
+func TestTruncateSocketId(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name     string
+		runId    string
+		expected string
+	}{
+		{
+			name:     "full ulid is truncated to its trailing characters",
+			runId:    "01M08JMBSSZ05YPJGKKV9B552F",
+			expected: "KV9B552F",
+		},
+		{
+			name:     "id shorter than the truncation length is left alone",
+			runId:    "abcd",
+			expected: "abcd",
+		},
+		{
+			name:     "empty id is left alone",
+			runId:    "",
+			expected: "",
+		},
+	} {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.expected, truncateSocketId(tt.runId))
+		})
 	}
 }
 
