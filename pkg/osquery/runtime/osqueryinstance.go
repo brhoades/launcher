@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/apache/thrift/lib/go/thrift"
@@ -75,6 +76,16 @@ const (
 
 	// How long to wait for a single osqueryinstance healthcheck before forcibly returning error
 	healthcheckTimeout = 10 * time.Second
+
+	// How often to confirm the extension sockets we're serving on still exist on disk. Our
+	// healthcheck cannot detect their removal -- it pings the extension manager servers in-process
+	// and reuses an already-open client connection, neither of which touches the filesystem.
+	extensionSocketCheckInterval = 5 * time.Second
+
+	// How many consecutive checks must fail before we report missing extension sockets. We add a
+	// server to `extensionManagerServers` before it has registered with osquery and bound its
+	// socket, so a single check can legitimately race startup; a real removal is permanent.
+	extensionSocketChecksBeforeReport = 2
 )
 
 // OsqueryInstanceOption is a functional option pattern for defining how an
@@ -121,6 +132,8 @@ type OsqueryInstance struct {
 	extensionManagerClient  *osquery.ExtensionManagerClient
 	history                 types.OsqueryHistorian
 	startFunc               func(cmd *exec.Cmd) error
+	socketCheckFailures     atomic.Int64 // consecutive failed extension socket checks
+	socketsMissingReported  atomic.Bool  // tracks whether we've already reported missing extension sockets
 }
 
 // Healthy will check to determine whether or not the osquery process that is
@@ -568,7 +581,87 @@ func (i *OsqueryInstance) Launch() error {
 		return nil
 	})
 
+	// Watch the extension sockets on disk. This is observation only -- it exists because the
+	// healthcheck above cannot see a socket that has been unlinked out from under us, and osquery
+	// will keep running for some time afterward before dying over an unreachable plugin.
+	i.errgroup.StartRepeatedGoroutine(ctx, "extension_socket_watch", extensionSocketCheckInterval, 0, func() error {
+		i.checkExtensionSockets(ctx)
+
+		// Never return an error here -- doing so would collapse the errgroup and take down
+		// the instance, and this routine is purely diagnostic.
+		return nil
+	})
+
 	return nil
+}
+
+// checkExtensionSockets confirms that osquery's extension manager socket, and a socket for each
+// extension manager server we're running, still exist on disk. A unix socket that is unlinked
+// after we bind to it leaves our listener working but unreachable to anything connecting by path,
+// so this is invisible to the rest of our instrumentation.
+func (i *OsqueryInstance) checkExtensionSockets(ctx context.Context) {
+	managerSocketPresent := true
+	if _, err := os.Stat(i.paths.extensionSocketPath); err != nil {
+		managerSocketPresent = false
+	}
+
+	// osquery-go appends ".<uuid>" to our socket path for each extension it registers, and does not
+	// expose the assigned uuid, so we glob rather than checking exact paths.
+	foundSockets, err := filepath.Glob(i.paths.extensionSocketPath + ".*")
+	if err != nil {
+		i.slogger.Log(ctx, slog.LevelWarn,
+			"could not glob for extension sockets",
+			"err", err,
+		)
+		return
+	}
+
+	i.emsLock.RLock()
+	expectedSockets := make([]string, 0, len(i.extensionManagerServers))
+	for srvName := range i.extensionManagerServers {
+		expectedSockets = append(expectedSockets, srvName)
+	}
+	i.emsLock.RUnlock()
+
+	if managerSocketPresent && len(foundSockets) >= len(expectedSockets) {
+		i.socketCheckFailures.Store(0)
+		if i.socketsMissingReported.Swap(false) {
+			i.slogger.Log(ctx, slog.LevelInfo,
+				"extension sockets present again",
+				"manager_socket", i.paths.extensionSocketPath,
+				"found_sockets", foundSockets,
+			)
+		}
+		return
+	}
+
+	// A server is added to `extensionManagerServers` before it registers with osquery and binds its
+	// socket, so one failed check may just mean we caught startup mid-flight. Wait for a couple in
+	// a row before reporting -- a socket that was removed does not come back.
+	if i.socketCheckFailures.Add(1) < extensionSocketChecksBeforeReport {
+		i.slogger.Log(ctx, slog.LevelDebug,
+			"extension socket check failed, will recheck before reporting",
+			"expected_socket_count", len(expectedSockets),
+			"found_socket_count", len(foundSockets),
+		)
+		return
+	}
+
+	if i.socketsMissingReported.Swap(true) {
+		// Already reported -- don't log on every interval for a persistent failure.
+		return
+	}
+
+	i.slogger.Log(ctx, slog.LevelError,
+		"extension sockets missing from disk -- osquery will not be able to reach our extensions",
+		"manager_socket", i.paths.extensionSocketPath,
+		"manager_socket_present", managerSocketPresent,
+		"expected_socket_count", len(expectedSockets),
+		"found_socket_count", len(foundSockets),
+		"expected_extensions", expectedSockets,
+		"found_sockets", foundSockets,
+		"consecutive_failures", i.socketCheckFailures.Load(),
+	)
 }
 
 // startOsquerydProcess starts the osquery instance's `cmd` and waits for the osqueryd process
@@ -795,6 +888,11 @@ func (i *OsqueryInstance) createOsquerydCommand(osquerydBinary string) (*exec.Cm
 
 	if i.knapsack.OsqueryVerbose() {
 		cmd.Args = append(cmd.Args, "--verbose")
+
+		// osquery routes its status logs through our logger plugin, so it goes quiet precisely
+		// when that extension becomes unreachable. Keep them coming over stderr too while we're
+		// debugging. Only applied when verbose, to avoid the log volume fleet-wide.
+		cmd.Args = append(cmd.Args, "--logger_stderr=true", "--logger_min_status=0")
 	}
 
 	// Configs aren't expected to change often, so refresh configs
@@ -936,6 +1034,14 @@ func (i *OsqueryInstance) StartOsqueryExtensionManagerServer(name string, client
 			)
 			return fmt.Errorf("running extension server: %w", err)
 		}
+
+		// The server stopped without error. When restarts are allowed we swallow this below, so
+		// log it here -- otherwise the extension simply disappears with no record of it.
+		i.slogger.Log(context.TODO(), slog.LevelWarn,
+			"extension manager server stopped serving",
+			"extension_name", name,
+			"allow_restart", allowRestart,
+		)
 
 		// Don't return an error, so the errgroup won't exit
 		if allowRestart {

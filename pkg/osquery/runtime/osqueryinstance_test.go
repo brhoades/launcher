@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -21,6 +23,8 @@ import (
 	"github.com/kolide/launcher/v2/pkg/backoff"
 	"github.com/kolide/launcher/v2/pkg/log/multislogger"
 	settingsstoremock "github.com/kolide/launcher/v2/pkg/osquery/mocks"
+	"github.com/kolide/launcher/v2/pkg/threadsafebuffer"
+	osquerygo "github.com/osquery/osquery-go"
 	osquerygen "github.com/osquery/osquery-go/gen/osquery"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -680,4 +684,109 @@ func TestReloadKatcExtension(t *testing.T) {
 	}
 
 	k.AssertExpectations(t)
+}
+
+func TestCheckExtensionSockets(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		testCaseName      string
+		createSocketFiles bool
+		expectLog         bool
+	}{
+		{
+			testCaseName:      "sockets present",
+			createSocketFiles: true,
+			expectLog:         false,
+		},
+		{
+			testCaseName:      "sockets removed out from under us",
+			createSocketFiles: false,
+			expectLog:         true,
+		},
+	} {
+		t.Run(tt.testCaseName, func(t *testing.T) {
+			t.Parallel()
+
+			var logBytes threadsafebuffer.ThreadSafeBuffer
+			socketPath := filepath.Join(t.TempDir(), "osquery.sock")
+			i := testInstanceForSocketCheck(t, &logBytes, socketPath)
+
+			if tt.createSocketFiles {
+				writeFakeSockets(t, socketPath, socketPath+".123", socketPath+".456")
+			}
+
+			// Check repeatedly -- a real removal fails every check, so it should be reported.
+			for range extensionSocketChecksBeforeReport {
+				i.checkExtensionSockets(context.TODO())
+			}
+
+			if !tt.expectLog {
+				require.NotContains(t, logBytes.String(), "extension sockets missing from disk")
+				return
+			}
+
+			require.Contains(t, logBytes.String(), "extension sockets missing from disk")
+			require.Contains(t, logBytes.String(), "expected_socket_count=2")
+			require.Contains(t, logBytes.String(), "found_socket_count=0")
+
+			// A persistent failure should only be reported once, not on every interval.
+			previousLogs := logBytes.String()
+			i.checkExtensionSockets(context.TODO())
+			require.Equal(t, previousLogs, logBytes.String(), "should not log repeatedly for the same failure")
+		})
+	}
+}
+
+// TestCheckExtensionSockets_ToleratesStartupRace confirms we do not report during the window where
+// a server has been added to extensionManagerServers but has not yet bound its socket.
+func TestCheckExtensionSockets_ToleratesStartupRace(t *testing.T) {
+	t.Parallel()
+
+	var logBytes threadsafebuffer.ThreadSafeBuffer
+	socketPath := filepath.Join(t.TempDir(), "osquery.sock")
+	i := testInstanceForSocketCheck(t, &logBytes, socketPath)
+
+	// Only the first extension has registered so far.
+	writeFakeSockets(t, socketPath, socketPath+".123")
+	i.checkExtensionSockets(context.TODO())
+	require.NotContains(t, logBytes.String(), "extension sockets missing from disk")
+
+	// The second extension registers before the next check.
+	writeFakeSockets(t, socketPath+".456")
+	i.checkExtensionSockets(context.TODO())
+	require.NotContains(t, logBytes.String(), "extension sockets missing from disk")
+
+	// Now the sockets are removed for real, and we report it.
+	require.NoError(t, os.Remove(socketPath))
+	require.NoError(t, os.Remove(socketPath+".123"))
+	require.NoError(t, os.Remove(socketPath+".456"))
+	for range extensionSocketChecksBeforeReport {
+		i.checkExtensionSockets(context.TODO())
+	}
+
+	require.Contains(t, logBytes.String(), "extension sockets missing from disk")
+	require.Contains(t, logBytes.String(), "manager_socket_present=false")
+	require.Contains(t, logBytes.String(), "found_socket_count=0")
+}
+
+func testInstanceForSocketCheck(t *testing.T, logBytes *threadsafebuffer.ThreadSafeBuffer, socketPath string) *OsqueryInstance {
+	t.Helper()
+
+	return &OsqueryInstance{
+		slogger: slog.New(slog.NewTextHandler(logBytes, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		paths:   &osqueryFilePaths{extensionSocketPath: socketPath},
+		extensionManagerServers: map[string]*osquerygo.ExtensionManagerServer{
+			KolideSaasExtensionName: nil,
+			katcExtensionName:       nil,
+		},
+	}
+}
+
+func writeFakeSockets(t *testing.T, paths ...string) {
+	t.Helper()
+
+	for _, p := range paths {
+		require.NoError(t, os.WriteFile(p, []byte{}, 0600))
+	}
 }

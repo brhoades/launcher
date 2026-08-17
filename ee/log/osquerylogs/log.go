@@ -1,7 +1,6 @@
 package osquerylogs
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -56,33 +55,45 @@ func NewOsqueryLogAdapter(slogger *slog.Logger, rootDirectory string, opts ...Op
 
 }
 
+// Write emits one log record per line in p. A single read from osquery's stdout/stderr pipe
+// frequently contains several glog lines; emitting them as one record glues them together and
+// applies the first line's level to all of them, which makes the log stream hard to search.
+// Note that glog continuation lines (stack traces, wrapped messages) carry no level prefix, so
+// they fall back to the adapter's default level.
 func (l *OsqueryLogAdapter) Write(p []byte) (int, error) {
-	if bytes.Contains(p, []byte("Accelerating distributed query checkins")) {
-		// Skip writing this. But we still return len(p) so the caller thinks it was written
-		return len(p), nil
-	}
+	for line := range strings.SplitSeq(string(p), "\n") {
+		msg := strings.TrimSpace(line)
+		if msg == "" {
+			continue
+		}
 
-	// Occasionally, launcher will fail to start osquery -- in this case, osquery fails
-	// to lock the pidfile, and then will not kill the process using the pidfile because
-	// it does not appear to be another instance of osquery. We attempt to log additional
-	// information here about the process locking the pidfile.
-	// See: https://github.com/osquery/osquery/issues/7796
-	if bytes.Contains(p, []byte("Refusing to kill non-osqueryd process")) {
-		l.slogger.Log(context.TODO(), slog.LevelError,
-			"detected non-osqueryd process using pidfile, logging info about process",
+		if strings.Contains(msg, "Accelerating distributed query checkins") {
+			// Skip writing this. But we still return len(p) so the caller thinks it was written
+			continue
+		}
+
+		// Occasionally, launcher will fail to start osquery -- in this case, osquery fails
+		// to lock the pidfile, and then will not kill the process using the pidfile because
+		// it does not appear to be another instance of osquery. We attempt to log additional
+		// information here about the process locking the pidfile.
+		// See: https://github.com/osquery/osquery/issues/7796
+		if strings.Contains(msg, "Refusing to kill non-osqueryd process") {
+			l.slogger.Log(context.TODO(), slog.LevelError,
+				"detected non-osqueryd process using pidfile, logging info about process",
+			)
+			pidfileLine := []byte(msg)
+			gowrapper.Go(context.TODO(), l.slogger, func() {
+				l.logInfoAboutUnrecognizedProcessLockingPidfile(pidfileLine)
+			})
+		}
+
+		caller := extractOsqueryCaller(msg)
+		level := l.extractLogLevel(msg)
+		l.slogger.Log(context.TODO(), level,
+			msg, // nolint:sloglint // it's fine to not have a constant or literal here
+			"caller", caller,
 		)
-		gowrapper.Go(context.TODO(), l.slogger, func() {
-			l.logInfoAboutUnrecognizedProcessLockingPidfile(p)
-		})
 	}
-
-	msg := strings.TrimSpace(string(p))
-	caller := extractOsqueryCaller(msg)
-	level := l.extractLogLevel(msg)
-	l.slogger.Log(context.TODO(), level,
-		msg, // nolint:sloglint // it's fine to not have a constant or literal here
-		"caller", caller,
-	)
 
 	return len(p), nil
 }
