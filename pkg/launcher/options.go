@@ -376,12 +376,16 @@ func ParseOptions(subcommandName string, args []string) (*Options, error) {
 		*flKolideHosted = true
 	}
 
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "blawindows" {
 		// check for old root directories before returning the configured option in case we've stomped over with windows MSI install
+		fmt.Printf("root dir pre: %+v\n", flRootDirectory)
+		fmt.Printf("root dir pre: %s\n", *flRootDirectory)
 		updatedRootDirectory := DetermineRootDirectoryOverride(*flRootDirectory, *flKolideServerURL, *flPackageIdentifier)
 		if updatedRootDirectory != *flRootDirectory {
 			*flRootDirectory = updatedRootDirectory
 		}
+		fmt.Printf("root dir post: %+v\n", flRootDirectory)
+		fmt.Printf("root dir post: %s\n", *flRootDirectory)
 	}
 
 	opts := &Options{
