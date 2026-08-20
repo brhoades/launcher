@@ -1,7 +1,11 @@
 package launcher
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -91,10 +95,8 @@ func DefaultPath(path defaultPath) string {
 }
 
 // DetermineRootDirectoryOverride is used specifically for windows deployments to override the
-// configured root directory if another well known location containing a launcher DB already exists
-// This is used by ParseOptions which doesn't have access to a logger, we should add more logging here
-// when we have that available
-func DetermineRootDirectoryOverride(optsRootDirectory, kolideServerURL, packageIdentifier string) string {
+// configured root directory if another well known location containing a writable launcher DB already exists.
+func DetermineRootDirectoryOverride(logger *slog.Logger, optsRootDirectory, kolideServerURL, packageIdentifier string) string {
 	if runtime.GOOS != "windows" {
 		return optsRootDirectory
 	}
@@ -115,11 +117,15 @@ func DetermineRootDirectoryOverride(optsRootDirectory, kolideServerURL, packageI
 	// unlikely path but doesn't feel right updating the rootDirectory without knowing what's going
 	// on here
 	if err != nil {
-		// we should add logs here when available - revisit with https://github.com/kolide/launcher/issues/1698
+		logger.Log(context.TODO(), slog.LevelWarn,
+			"failed to determine if an existing database is present in the root directory",
+			"database", optsDBLocation,
+			"err", err,
+		)
 		return optsRootDirectory
 	}
 
-	// database already exists in configured root directory, keep that
+	// valid root directory previously in use
 	if dbExists {
 		return optsRootDirectory
 	}
@@ -131,25 +137,45 @@ func DetermineRootDirectoryOverride(optsRootDirectory, kolideServerURL, packageI
 			continue
 		}
 
-		// the fallaback path MUST contain the identifier
+		// a valid fallback path contains our identifier
 		if !strings.Contains(path, packageIdentifier) {
 			continue
 		}
 
 		testingLocation := filepath.Join(path, "launcher.db")
 		dbExists, err := nonEmptyFileExists(testingLocation)
-		if err == nil && dbExists {
-			return path
-		}
-
-		if err != nil {
-			// we should add logs here when available - revisit with https://github.com/kolide/launcher/issues/1698
+		switch {
+		case err != nil:
+			logger.Log(context.TODO(), slog.LevelDebug,
+				"failed to determine if an existing database was present in a well-known location",
+				"database", testingLocation,
+				"err", err,
+			)
+			continue
+		case !dbExists:
 			continue
 		}
+
+		f, err := os.OpenFile(testingLocation, os.O_RDWR, 0644)
+		if errors.Is(err, fs.ErrPermission) {
+			logger.Log(context.TODO(), slog.LevelWarn,
+				"user lacks permission to an existing database in a well-known location",
+				"database", testingLocation,
+				"err", err,
+			)
+			continue
+		}
+		f.Close()
+
+		logger.Log(context.TODO(), slog.LevelWarn,
+			"overriding root directory to a well-known location",
+			"original_root", optsRootDirectory,
+			"new_root", path,
+		)
+		return path
 	}
 
-	// if all else fails, return the originally configured rootDirectory -
-	// this is expected for devices that are truly installing from MSI for the first time
+	// expected for devices that are truly installing from MSI for the first time or running unprivileged
 	return optsRootDirectory
 }
 

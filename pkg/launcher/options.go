@@ -1,10 +1,12 @@
 package launcher
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,7 +187,7 @@ func (i *ArrayFlags) Set(value string) error {
 // ParseOptions parses the options that may be configured via command-line flags
 // and/or environment variables, determines order of precedence and returns a
 // typed struct of options for further application use
-func ParseOptions(subcommandName string, args []string) (*Options, error) {
+func ParseOptions(logger *slog.Logger, subcommandName string, args []string) (*Options, error) {
 	flagsetName := "launcher"
 	if subcommandName != "" {
 		flagsetName = fmt.Sprintf("launcher %s", subcommandName)
@@ -312,6 +314,10 @@ func ParseOptions(subcommandName string, args []string) (*Options, error) {
 
 	// On windows, we should make sure osquerydPath ends in .exe
 	if runtime.GOOS == "windows" && !strings.HasSuffix(osquerydPath, ".exe") {
+		logger.Log(context.TODO(), slog.LevelInfo,
+			"appending missing file extension to osqueryd path",
+			"original_path", osquerydPath,
+		)
 		osquerydPath = osquerydPath + ".exe"
 	}
 
@@ -378,7 +384,7 @@ func ParseOptions(subcommandName string, args []string) (*Options, error) {
 
 	if runtime.GOOS == "windows" {
 		// check for old root directories before returning the configured option in case we've stomped over with windows MSI install
-		updatedRootDirectory := DetermineRootDirectoryOverride(*flRootDirectory, *flKolideServerURL, *flPackageIdentifier)
+		updatedRootDirectory := DetermineRootDirectoryOverride(logger, *flRootDirectory, *flKolideServerURL, *flPackageIdentifier)
 		if updatedRootDirectory != *flRootDirectory {
 			*flRootDirectory = updatedRootDirectory
 		}
