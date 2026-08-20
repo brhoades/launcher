@@ -142,8 +142,8 @@ func denyWriteAccess(t *testing.T, path string) {
 	currentUser, err := user.Current()
 	require.NoError(t, err)
 
-	require.NoError(t, exec.CommandContext(context.TODO(), "icacls.exe", path, "/deny", currentUser.Username+":(W)").Run()) //nolint:forbidigo // Fine to use exec.CommandContext in test
+	require.NoError(t, exec.CommandContext(context.TODO(), "C:\\Windows\\System32\\icacls.exe", path, "/deny", currentUser.Username+":(W)").Run()) //nolint:forbidigo // Fine to use exec.CommandContext in test
 	t.Cleanup(func() {
-		_ = exec.CommandContext(context.TODO(), "icacls.exe", path, "/remove:d", currentUser.Username).Run() //nolint:forbidigo // Fine to use exec.CommandContext in test
+		_ = exec.CommandContext(context.TODO(), "C:\\Windows\\System32\\icacls.exe", path, "/remove:d", currentUser.Username).Run() //nolint:forbidigo // Fine to use exec.CommandContext in test
 	})
 }
