@@ -2,9 +2,7 @@ package launcher
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -94,46 +92,81 @@ func DefaultPath(path defaultPath) string {
 	}
 }
 
+type rootDirOverrideOpts struct {
+	logger            *slog.Logger
+	kolideServerURL   string
+	packageIdentifier string
+	isPrivileged      bool
+	wellKnownRootDirs []string
+}
+
 // DetermineRootDirectoryOverride is used specifically for windows deployments to override the
-// configured root directory if another well known location containing a writable launcher DB already exists.
+// configured root directory if another well known location containing a launcher DB already exists.
 func DetermineRootDirectoryOverride(logger *slog.Logger, optsRootDirectory, kolideServerURL, packageIdentifier string) string {
 	if runtime.GOOS != "windows" {
 		return optsRootDirectory
 	}
 
+	return rootDirectoryOverride(optsRootDirectory, rootDirOverrideOpts{
+		logger:            logger,
+		kolideServerURL:   kolideServerURL,
+		packageIdentifier: packageIdentifier,
+		isPrivileged:      runningElevated(),
+		wellKnownRootDirs: likelyWindowsRootDirPaths,
+	})
+}
+
+// rootDirectoryOverride holds the logic behind DetermineRootDirectoryOverride. Only
+// rootDirectory is required, every opts field defaults to the passthrough answer.
+func rootDirectoryOverride(rootDirectory string, opts rootDirOverrideOpts) string {
+	logger := opts.logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+
 	// don't mess with the path if this installation isn't pointing to a kolide server URL
-	if !IsKolideHostedServerURL(kolideServerURL) {
-		return optsRootDirectory
+	if !IsKolideHostedServerURL(opts.kolideServerURL) {
+		return rootDirectory
 	}
 
 	// assume the default identifier if none is provided
+	packageIdentifier := opts.packageIdentifier
 	if strings.TrimSpace(packageIdentifier) == "" {
 		packageIdentifier = DefaultLauncherIdentifier
 	}
 
-	optsDBLocation := filepath.Join(optsRootDirectory, "launcher.db")
-	dbExists, err := nonEmptyFileExists(optsDBLocation)
+	dbLocation := filepath.Join(rootDirectory, "launcher.db")
+	dbExists, err := nonEmptyFileExists(dbLocation)
 	// If we get an unknown error, back out from making any options changes. This is an
 	// unlikely path but doesn't feel right updating the rootDirectory without knowing what's going
 	// on here
 	if err != nil {
 		logger.Log(context.TODO(), slog.LevelWarn,
 			"failed to determine if an existing database is present in the root directory",
-			"database", optsDBLocation,
+			"database", dbLocation,
 			"err", err,
 		)
-		return optsRootDirectory
+		return rootDirectory
 	}
 
 	// valid root directory previously in use
 	if dbExists {
-		return optsRootDirectory
+		return rootDirectory
+	}
+
+	// override paths only make sense for privileged execution
+	if !opts.isPrivileged {
+		logger.Log(context.TODO(), slog.LevelWarn,
+			"not running elevated, skipping well-known root directory locations",
+			"root_directory", rootDirectory,
+		)
+		return rootDirectory
 	}
 
 	// we know this is a fresh install with no launcher.db in the configured root directory,
 	// check likely locations and return updated rootDirectory if found
-	for _, path := range likelyWindowsRootDirPaths {
-		if path == optsRootDirectory { // we already know this does not contain an enrolled DB
+	for _, path := range opts.wellKnownRootDirs {
+		if path == rootDirectory { // we already know this does not contain an enrolled DB
 			continue
 		}
 
@@ -144,39 +177,29 @@ func DetermineRootDirectoryOverride(logger *slog.Logger, optsRootDirectory, koli
 
 		testingLocation := filepath.Join(path, "launcher.db")
 		dbExists, err := nonEmptyFileExists(testingLocation)
-		switch {
-		case err != nil:
-			logger.Log(context.TODO(), slog.LevelDebug,
+		if err != nil {
+			logger.Log(context.TODO(), slog.LevelWarn,
 				"failed to determine if an existing database was present in a well-known location",
 				"database", testingLocation,
 				"err", err,
 			)
 			continue
-		case !dbExists:
-			continue
 		}
 
-		f, err := os.OpenFile(testingLocation, os.O_RDWR, 0644)
-		if errors.Is(err, fs.ErrPermission) {
-			logger.Log(context.TODO(), slog.LevelWarn,
-				"user lacks permission to an existing database in a well-known location",
-				"database", testingLocation,
-				"err", err,
-			)
+		if !dbExists {
 			continue
 		}
-		f.Close()
 
 		logger.Log(context.TODO(), slog.LevelWarn,
 			"overriding root directory to a well-known location",
-			"original_root", optsRootDirectory,
+			"original_root", rootDirectory,
 			"new_root", path,
 		)
 		return path
 	}
 
-	// expected for devices that are truly installing from MSI for the first time or running unprivileged
-	return optsRootDirectory
+	// expected for devices that are truly installing from MSI for the first time
+	return rootDirectory
 }
 
 func nonEmptyFileExists(path string) (bool, error) {
