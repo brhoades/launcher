@@ -470,8 +470,8 @@ func runLauncher(ctx context.Context, cancel func(), multiSlogger, systemMultiSl
 		controlService.RegisterConsumer(agentFlagsSubsystemName, keyvalueconsumer.New(flagController))
 		// katcConfigConsumer handles updates to Kolide's custom ATC tables
 		controlService.RegisterConsumer(katcSubsystemName, keyvalueconsumer.NewConfigConsumer(k.KatcConfigStore()))
-		controlService.RegisterSubscriber(katcSubsystemName, osqueryRunner)
-		controlService.RegisterSubscriber(katcSubsystemName, startupSettingsWriter)
+		controlService.RegisterSubscriber(katcSubsystemName, osqueryRunner)         //nolint:staticcheck // SA1019: use types.WatchedKVStore instead
+		controlService.RegisterSubscriber(katcSubsystemName, startupSettingsWriter) //nolint:staticcheck // SA1019: use types.WatchedKVStore instead
 		controlService.RegisterConsumer(serverReleaseTrackerDataSubsystemName, keyvalueconsumer.NewConfigConsumer(k.ServerReleaseTrackerDataStore()))
 		controlService.RegisterConsumer("dta", dtainfoconsumer.New(k))
 
@@ -512,7 +512,7 @@ func runLauncher(ctx context.Context, cancel func(), multiSlogger, systemMultiSl
 		// the shared localization file whenever the control server pushes new
 		// translations. Desktop child processes pick up the new file on their
 		// next read.
-		controlService.RegisterSubscriber(localizationsSubsystemName, runner)
+		controlService.RegisterSubscriber(localizationsSubsystemName, runner) //nolint:staticcheck // SA1019: use types.WatchedKVStore instead
 
 		// create an action queue for all other action style commands
 		actionsQueue = actionqueue.New(
@@ -561,17 +561,18 @@ func runLauncher(ctx context.Context, cancel func(), multiSlogger, systemMultiSl
 		// begin log shipping and subscribe to token updates
 		// nil check in case it failed to create for some reason
 		if logShipper != nil {
-			controlService.RegisterSubscriber(authTokensSubsystemName, logShipper)
+			controlService.RegisterSubscriber(authTokensSubsystemName, logShipper) //nolint:staticcheck // SA1019: use types.WatchedKVStore instead
 		}
 
 		if telemetryExporter != nil {
-			controlService.RegisterSubscriber(authTokensSubsystemName, telemetryExporter)
+			controlService.RegisterSubscriber(authTokensSubsystemName, telemetryExporter) //nolint:staticcheck // SA1019: use types.WatchedKVStore instead
 		}
 
 		// logPublishClient handles refreshing its own auth tokens and encryption keys from the token store
-		controlService.RegisterSubscriber(authTokensSubsystemName, logPublishClient)
+		controlService.RegisterSubscriber(authTokensSubsystemName, logPublishClient) //nolint:staticcheck // SA1019: use types.WatchedKVStore instead
+
 		// logPublishClient handles embedding device metadata into encrypted payloads, subscribe to any changes in e.g. device ID
-		controlService.RegisterSubscriber(serverDataSubsystemName, logPublishClient)
+		controlService.RegisterSubscriber(serverDataSubsystemName, logPublishClient) //nolint:staticcheck // SA1019: use types.WatchedKVStore instead
 
 		if metadataWriter := internal.NewMetadataWriter(slogger, k); metadataWriter == nil {
 			slogger.Log(ctx, slog.LevelError,
@@ -579,7 +580,7 @@ func runLauncher(ctx context.Context, cancel func(), multiSlogger, systemMultiSl
 				"err", err,
 			)
 		} else {
-			controlService.RegisterSubscriber(serverDataSubsystemName, metadataWriter)
+			controlService.RegisterSubscriber(serverDataSubsystemName, metadataWriter) //nolint:staticcheck // SA1019: use types.WatchedKVStore instead
 			// explicitly trigger the ping at least once to ensure updated metadata is written
 			// on upgrades, the subscriber will continue to do this automatically when new
 			// information is made available from server_data (e.g. on a fresh install)

@@ -416,6 +416,9 @@ func (cs *ControlService) RegisterConsumer(subsystem string, consumer consumer) 
 }
 
 // Registers a subscriber for subsystem update notifications
+//
+// Deprecated: watch the consumer's store via types.WatchedKVStore instead. This API
+// blocks controlserver requests in sequence until subscribers return from Ping().
 func (cs *ControlService) RegisterSubscriber(subsystem string, subscriber subscriber) {
 	cs.subscribers[subsystem] = append(cs.subscribers[subsystem], subscriber)
 }
