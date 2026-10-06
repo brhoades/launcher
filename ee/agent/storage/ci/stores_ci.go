@@ -11,6 +11,7 @@ import (
 	"github.com/kolide/launcher/v2/ee/agent/storage"
 	agentbbolt "github.com/kolide/launcher/v2/ee/agent/storage/bbolt"
 	"github.com/kolide/launcher/v2/ee/agent/storage/inmemory"
+	"github.com/kolide/launcher/v2/ee/agent/storage/watched"
 	"github.com/kolide/launcher/v2/ee/agent/types"
 )
 
@@ -54,6 +55,8 @@ func makeInMemoryStores(t *testing.T, storeNames []storage.Store) map[storage.St
 		stores[storeName] = inmemory.NewStore()
 	}
 
+	stores[storage.FilewalkConfigStore] = watched.NewStore(stores[storage.FilewalkConfigStore])
+
 	return stores
 }
 
@@ -68,6 +71,8 @@ func makeBboltStores(t *testing.T, slogger *slog.Logger, db *bbolt.DB, storeName
 
 		stores[storeName] = store
 	}
+
+	stores[storage.FilewalkConfigStore] = watched.NewStore(stores[storage.FilewalkConfigStore])
 
 	return stores, nil
 }

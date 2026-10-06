@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/kolide/launcher/v2/ee/agent/storage"
+	"github.com/kolide/launcher/v2/ee/agent/storage/watched"
 	"github.com/kolide/launcher/v2/ee/agent/types"
 	"github.com/kolide/launcher/v2/ee/observability"
 	"go.etcd.io/bbolt"
@@ -51,6 +52,8 @@ func MakeStores(ctx context.Context, slogger *slog.Logger, db *bbolt.DB) (map[st
 
 		stores[storeName] = store
 	}
+
+	stores[storage.FilewalkConfigStore] = watched.NewStore(stores[storage.FilewalkConfigStore])
 
 	return stores, nil
 }

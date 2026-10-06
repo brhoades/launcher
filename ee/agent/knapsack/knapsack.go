@@ -358,8 +358,9 @@ func (k *knapsack) KatcConfigStore() types.KVStore {
 	return k.getKVStore(storage.KatcConfigStore)
 }
 
-func (k *knapsack) FilewalkConfigStore() types.KVStore {
-	return k.getKVStore(storage.FilewalkConfigStore)
+func (k *knapsack) FilewalkConfigStore() types.WatchedKVStore {
+	store, _ := k.getKVStore(storage.FilewalkConfigStore).(types.WatchedKVStore)
+	return store
 }
 
 func (k *knapsack) FilewalkResultsStore() types.KVStore {

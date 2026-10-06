@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/kolide/launcher/v2/ee/agent/storage"
 	storageci "github.com/kolide/launcher/v2/ee/agent/storage/ci"
+	"github.com/kolide/launcher/v2/ee/agent/storage/watched"
 	typesmocks "github.com/kolide/launcher/v2/ee/agent/types/mocks"
 	"github.com/kolide/launcher/v2/pkg/threadsafebuffer"
 	"github.com/stretchr/testify/require"
@@ -33,7 +34,7 @@ func TestExecute(t *testing.T) {
 	mockKnapsack := typesmocks.NewKnapsack(t)
 	cfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
 	require.NoError(t, err)
-	mockKnapsack.On("FilewalkConfigStore").Return(cfgStore)
+	mockKnapsack.On("FilewalkConfigStore").Return(watched.NewStore(cfgStore))
 	resultsStore, err := storageci.NewStore(t, slogger, storage.FilewalkResultsStore.String())
 	require.NoError(t, err)
 	mockKnapsack.On("FilewalkResultsStore").Return(resultsStore)
@@ -85,7 +86,7 @@ func TestPing(t *testing.T) {
 	mockKnapsack := typesmocks.NewKnapsack(t)
 	cfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
 	require.NoError(t, err)
-	mockKnapsack.On("FilewalkConfigStore").Return(cfgStore)
+	mockKnapsack.On("FilewalkConfigStore").Return(watched.NewStore(cfgStore))
 	resultsStore, err := storageci.NewStore(t, slogger, storage.FilewalkResultsStore.String())
 	require.NoError(t, err)
 	mockKnapsack.On("FilewalkResultsStore").Return(resultsStore)
@@ -251,7 +252,7 @@ func TestDo(t *testing.T) {
 			mockKnapsack := typesmocks.NewKnapsack(t)
 			cfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
 			require.NoError(t, err)
-			mockKnapsack.On("FilewalkConfigStore").Return(cfgStore)
+			mockKnapsack.On("FilewalkConfigStore").Return(watched.NewStore(cfgStore))
 			resultsStore, err := storageci.NewStore(t, slogger, storage.FilewalkResultsStore.String())
 			require.NoError(t, err)
 			mockKnapsack.On("FilewalkResultsStore").Return(resultsStore)
@@ -328,7 +329,7 @@ func TestInterrupt_Multiple(t *testing.T) {
 	mockKnapsack := typesmocks.NewKnapsack(t)
 	cfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
 	require.NoError(t, err)
-	mockKnapsack.On("FilewalkConfigStore").Return(cfgStore)
+	mockKnapsack.On("FilewalkConfigStore").Return(watched.NewStore(cfgStore))
 
 	// Init filewalk manager
 	filewalkManager := New(mockKnapsack, slogger)
