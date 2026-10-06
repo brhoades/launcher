@@ -149,3 +149,14 @@ type GetterSetterDeleterIteratorUpdaterCounterAppender interface {
 //mockery:generate: true
 //mockery:filename: keyvalue_store.go
 type KVStore = GetterSetterDeleterIteratorUpdaterCounterAppender
+
+// Changed() returns a channel closed after a successful modification.
+type Watcher interface {
+	Changed() <-chan struct{}
+}
+
+// WatchedKVStore enables optional notification of changes to a KVStore.
+type WatchedKVStore interface {
+	KVStore
+	Watcher
+}
