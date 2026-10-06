@@ -479,7 +479,6 @@ func runLauncher(ctx context.Context, cancel func(), multiSlogger, systemMultiSl
 		filewalkManager := filewalker.New(k, slogger)
 		runGroup.Add("filewalkManager", filewalkManager.Execute, filewalkManager.Interrupt)
 		controlService.RegisterConsumer(filewalkSubsystemName, keyvalueconsumer.NewConfigConsumer(k.FilewalkConfigStore()))
-		controlService.RegisterSubscriber(filewalkSubsystemName, filewalkManager)
 
 		localizationConsumer, err := localizationconsumer.NewLocalizationConsumer(slogger, k.LocalizationStore())
 		if err != nil {

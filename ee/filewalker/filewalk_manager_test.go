@@ -32,9 +32,10 @@ func TestExecute(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 	mockKnapsack := typesmocks.NewKnapsack(t)
-	cfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
+	rawCfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
 	require.NoError(t, err)
-	mockKnapsack.On("FilewalkConfigStore").Return(watched.NewStore(cfgStore))
+	cfgStore := watched.NewStore(rawCfgStore)
+	mockKnapsack.On("FilewalkConfigStore").Return(cfgStore)
 	resultsStore, err := storageci.NewStore(t, slogger, storage.FilewalkResultsStore.String())
 	require.NoError(t, err)
 	mockKnapsack.On("FilewalkResultsStore").Return(resultsStore)
@@ -84,9 +85,10 @@ func TestPing(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 	mockKnapsack := typesmocks.NewKnapsack(t)
-	cfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
+	rawCfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
 	require.NoError(t, err)
-	mockKnapsack.On("FilewalkConfigStore").Return(watched.NewStore(cfgStore))
+	cfgStore := watched.NewStore(rawCfgStore)
+	mockKnapsack.On("FilewalkConfigStore").Return(cfgStore)
 	resultsStore, err := storageci.NewStore(t, slogger, storage.FilewalkResultsStore.String())
 	require.NoError(t, err)
 	mockKnapsack.On("FilewalkResultsStore").Return(resultsStore)
@@ -125,9 +127,6 @@ func TestPing(t *testing.T) {
 	require.NoError(t, err)
 	cfgStore.Set([]byte(firstTestTableName), newCfgRaw)
 
-	// Call Ping
-	filewalkManager.Ping()
-
 	// Sleep less than our new, longer walk interval of one minute
 	time.Sleep(1 * time.Second)
 
@@ -151,8 +150,6 @@ func TestPing(t *testing.T) {
 	secondTestTableName := "TestPing2_tbl"
 	cfgStore.Set([]byte(secondTestTableName), secondCfgRaw)
 
-	// Call Ping
-	filewalkManager.Ping()
 	time.Sleep(time.Duration(3 * cfg.WalkInterval))
 
 	// Confirm we now have two filewalkers
@@ -172,8 +169,6 @@ func TestPing(t *testing.T) {
 	// Prepare an update: delete the new filewalker
 	require.NoError(t, cfgStore.Delete([]byte(secondTestTableName)))
 
-	// Call Ping
-	filewalkManager.Ping()
 	time.Sleep(time.Duration(3 * cfg.WalkInterval))
 
 	// Confirm we're back to one filewalker
@@ -250,9 +245,10 @@ func TestDo(t *testing.T) {
 				Level: slog.LevelDebug,
 			}))
 			mockKnapsack := typesmocks.NewKnapsack(t)
-			cfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
+			rawCfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
 			require.NoError(t, err)
-			mockKnapsack.On("FilewalkConfigStore").Return(watched.NewStore(cfgStore))
+			cfgStore := watched.NewStore(rawCfgStore)
+			mockKnapsack.On("FilewalkConfigStore").Return(cfgStore)
 			resultsStore, err := storageci.NewStore(t, slogger, storage.FilewalkResultsStore.String())
 			require.NoError(t, err)
 			mockKnapsack.On("FilewalkResultsStore").Return(resultsStore)
@@ -327,9 +323,10 @@ func TestInterrupt_Multiple(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 	mockKnapsack := typesmocks.NewKnapsack(t)
-	cfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
+	rawCfgStore, err := storageci.NewStore(t, slogger, storage.FilewalkConfigStore.String())
 	require.NoError(t, err)
-	mockKnapsack.On("FilewalkConfigStore").Return(watched.NewStore(cfgStore))
+	cfgStore := watched.NewStore(rawCfgStore)
+	mockKnapsack.On("FilewalkConfigStore").Return(cfgStore)
 
 	// Init filewalk manager
 	filewalkManager := New(mockKnapsack, slogger)

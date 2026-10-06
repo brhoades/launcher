@@ -33,7 +33,7 @@ type FilewalkManager struct {
 
 	// Internals
 	k        types.Knapsack
-	cfgStore types.Iterator
+	cfgStore types.WatchedKVStore
 	slogger  *slog.Logger
 
 	// Handle actor shutdown
@@ -54,27 +54,9 @@ func New(k types.Knapsack, slogger *slog.Logger) *FilewalkManager {
 }
 
 func (fm *FilewalkManager) Execute() error {
-	// Init filewalkers
-	cfgs, err := fm.pullConfigs()
-	if err != nil {
-		fm.slogger.Log(context.TODO(), slog.LevelError,
-			"failed to pull filewalk configs, will not be able to initialize filewalkers until subsystem data is updated",
-			"err", err,
-		)
-	}
-	fm.filewalkersLock.Lock()
-	for filewalkerName, cfg := range cfgs {
-		fm.filewalkers[filewalkerName] = newFilewalker(filewalkerName, cfg, fm.k.FilewalkResultsStore(), fm.slogger)
-		gowrapper.Go(context.TODO(), fm.slogger, fm.filewalkers[filewalkerName].Work)
-	}
-	fm.slogger.Log(context.TODO(), slog.LevelDebug,
-		"started all filewalkers",
-		"filewalker_count", len(fm.filewalkers),
-	)
-	fm.filewalkersLock.Unlock()
+	fm.watchConfigs()
 
 	// Wait for shutdown, then clean up all filewalkers
-	<-fm.interrupt
 	fm.filewalkersLock.Lock()
 	defer fm.filewalkersLock.Unlock()
 	for _, fw := range fm.filewalkers {
@@ -113,9 +95,22 @@ func (fm *FilewalkManager) pullConfigs() (map[string]filewalkConfig, error) {
 	return cfgs, nil
 }
 
-// Ping satisfies the control.subscriber interface -- the manager subscribes to changes to
-// the filewalk_config subsystem.
-func (fm *FilewalkManager) Ping() {
+// watchConfigs reconciles filewalker config changes on change.
+func (fm *FilewalkManager) watchConfigs() {
+	for {
+		changed := fm.cfgStore.Changed()
+		fm.reconcile()
+
+		select {
+		case <-changed:
+		case <-fm.interrupt:
+			return
+		}
+	}
+}
+
+// reconcile creates or updates existing filewalkers from the config store.
+func (fm *FilewalkManager) reconcile() {
 	fm.filewalkersLock.Lock()
 	defer fm.filewalkersLock.Unlock()
 
