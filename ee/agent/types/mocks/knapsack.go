@@ -1869,19 +1869,19 @@ func (_c *Knapsack_ExportTraces_Call) RunAndReturn(run func() bool) *Knapsack_Ex
 }
 
 // FilewalkConfigStore provides a mock function for the type Knapsack
-func (_mock *Knapsack) FilewalkConfigStore() types.KVStore {
+func (_mock *Knapsack) FilewalkConfigStore() types.WatchedKVStore {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for FilewalkConfigStore")
 	}
 
-	var r0 types.KVStore
-	if returnFunc, ok := ret.Get(0).(func() types.KVStore); ok {
+	var r0 types.WatchedKVStore
+	if returnFunc, ok := ret.Get(0).(func() types.WatchedKVStore); ok {
 		r0 = returnFunc()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(types.KVStore)
+			r0 = ret.Get(0).(types.WatchedKVStore)
 		}
 	}
 	return r0
@@ -1904,12 +1904,12 @@ func (_c *Knapsack_FilewalkConfigStore_Call) Run(run func()) *Knapsack_FilewalkC
 	return _c
 }
 
-func (_c *Knapsack_FilewalkConfigStore_Call) Return(kVStore types.KVStore) *Knapsack_FilewalkConfigStore_Call {
-	_c.Call.Return(kVStore)
+func (_c *Knapsack_FilewalkConfigStore_Call) Return(watchedKVStore types.WatchedKVStore) *Knapsack_FilewalkConfigStore_Call {
+	_c.Call.Return(watchedKVStore)
 	return _c
 }
 
-func (_c *Knapsack_FilewalkConfigStore_Call) RunAndReturn(run func() types.KVStore) *Knapsack_FilewalkConfigStore_Call {
+func (_c *Knapsack_FilewalkConfigStore_Call) RunAndReturn(run func() types.WatchedKVStore) *Knapsack_FilewalkConfigStore_Call {
 	_c.Call.Return(run)
 	return _c
 }
