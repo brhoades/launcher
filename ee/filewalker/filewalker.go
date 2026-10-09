@@ -80,6 +80,10 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 				}
 				return nil, nil
 			}
+			if ctx.Err() != nil {
+				f.slogger.Log(ctx, slog.LevelDebug, "file walk interrupted by context error")
+				return nil, filepath.SkipAll
+			}
 
 			pathsWalked++
 
@@ -108,6 +112,9 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 				"start_dir", match,
 				"err", err,
 			)
+		}
+		if ctx.Err() != nil {
+			return
 		}
 	}
 
