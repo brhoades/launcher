@@ -126,20 +126,19 @@ func (fm *FilewalkManager) run(ctx context.Context) {
 	}
 }
 
-// TODO: will clean up to unify walks in future commit. throwaway
 func (fm *FilewalkManager) walkConfigs(ctx context.Context, cfgs map[string]filewalkConfig, names []string) {
-	slices.Sort(names)
-	for _, name := range slices.Compact(names) {
-		if ctx.Err() != nil {
-			return
+	toWalk := make(map[string]filewalkConfig, len(names))
+	for _, name := range names {
+		if cfg, ok := cfgs[name]; ok {
+			toWalk[name] = cfg
 		}
-		cfg, ok := cfgs[name]
-		if !ok {
-			continue
-		}
-		spec := resolve(ctx, fm.slogger, map[string]filewalkConfig{name: cfg}, runtime.GOOS)
-		newFilewalker(spec, fm.resultsStore, fm.slogger).Filewalk(ctx)
 	}
+	if len(toWalk) == 0 {
+		return
+	}
+
+	spec := resolve(ctx, fm.slogger, toWalk, runtime.GOOS)
+	newFilewalker(spec, fm.resultsStore, fm.slogger).Filewalk(ctx)
 }
 
 // lastWalkTimes returns the map of filewalkConfig name to the last time the config was walked
