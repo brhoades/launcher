@@ -123,7 +123,7 @@ type (
 	// specification for a single walk run
 	walkSpec struct {
 		roots    []string
-		activate map[string][]*matcher
+		activate map[string]matcherSet
 		matchers []*matcher
 	}
 )
@@ -134,7 +134,7 @@ type (
 // resolve uses the filesystem to evaluate the root paths globs, then deduplicates
 // paths among the matchers which share them.
 func resolve(ctx context.Context, slogger *slog.Logger, cfgs map[string]filewalkConfig, goos string) walkSpec {
-	spec := walkSpec{activate: make(map[string][]*matcher)}
+	spec := walkSpec{activate: make(map[string]matcherSet)}
 	pathsToWalk := make(map[string]string)
 	var canonicalRoots []string
 
@@ -203,6 +203,17 @@ func resolve(ctx context.Context, slogger *slog.Logger, cfgs map[string]filewalk
 	}
 
 	return spec
+}
+
+// hasRootBelow reports whether any matcher activates strictly beneath dir.
+func (s walkSpec) hasRootBelow(dir string) bool {
+	prefix := canonicalize(dir)
+	for key := range s.activate {
+		if len(key) > len(prefix) && strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 const pathSep = string(filepath.Separator)

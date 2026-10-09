@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/kolide/launcher/v2/ee/agent/types"
@@ -27,7 +30,11 @@ type filewalker struct {
 }
 
 func newFilewalker(spec walkSpec, resultsStore types.GetterSetterDeleter, slogger *slog.Logger) *filewalker {
-	name := spec.matchers[0].name
+	names := make([]string, 0, len(spec.matchers))
+	for _, m := range spec.matchers {
+		names = append(names, m.name)
+	}
+	name := strings.Join(names, ",")
 	return &filewalker{
 		name:         name,
 		spec:         spec,
@@ -50,13 +57,16 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 	defer span.End()
 
 	walkStart := time.Now()
-	fileNames := make([]string, 0)
+	results := make(map[string][]string, len(f.spec.matchers))
+	for _, m := range f.spec.matchers {
+		results[m.name] = make([]string, 0)
+	}
 	errorCounts := make(map[string]int)
 	var pathsWalked, dirsSkipped int
 
-	m := f.spec.matchers[0]
 	for _, match := range f.spec.roots {
-		if err := filepath.WalkDir(match, func(path string, d fs.DirEntry, err error) error {
+		// active holds the matchers enabled for path; what we return is what path's children get.
+		if err := walkDirWithState(match, nil, func(path string, d fs.DirEntry, err error, activeMatchers matcherSet) (matcherSet, error) {
 			if err != nil {
 				key, expected := classifyWalkError(err)
 				errorCounts[key]++
@@ -68,24 +78,29 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 						"err", err,
 					)
 				}
-				return nil
+				return nil, nil
 			}
 
 			pathsWalked++
 
-			// Prune skipped directories before any other filter, so that we don't descend unnecessarily
-			if d.IsDir() && m.shouldSkipDir(path) {
-				dirsSkipped++
-				return fs.SkipDir
-			}
+			// Nested roots switch their matchers on partway down.
+			activeMatchers = activeMatchers.with(f.spec.activate[canonicalize(path)])
 
-			if !m.matches(path, d) {
-				return nil
+			// Prune skipped directories before any other filter, so that we don't descend unnecessarily
+			if d.IsDir() {
+				activeMatchers = activeMatchers.withoutSkipping(path)
+				// Keep descending with nothing active if another config's root lies below.
+				if len(activeMatchers) == 0 && !f.spec.hasRootBelow(path) {
+					dirsSkipped++
+					return nil, fs.SkipDir
+				}
 			}
 
 			// Add this file to our results
-			fileNames = append(fileNames, path)
-			return nil
+			for m := range activeMatchers.matching(path, d) {
+				results[m.name] = append(results[m.name], path)
+			}
+			return activeMatchers, nil
 		}); err != nil {
 			// Log error, but continue on to process other root dirs
 			f.slogger.Log(ctx, slog.LevelError,
@@ -98,7 +113,27 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 
 	span.AddEvent("walk_complete")
 
-	resultsRaw, err := json.Marshal(fileNames)
+	filesMatched := make(map[string]int, len(results))
+	for _, m := range f.spec.matchers {
+		f.storeResults(ctx, m.name, results[m.name])
+		filesMatched[m.name] = len(results[m.name])
+	}
+
+	span.AddEvent("walk_results_stored")
+
+	f.slogger.Log(ctx, slog.LevelInfo,
+		"completed filewalk",
+		"walk_duration", time.Since(walkStart).String(),
+		"error_counts", errorCounts,
+		"paths_walked", pathsWalked,
+		"dirs_skipped", dirsSkipped,
+		"files_matched", filesMatched,
+	)
+}
+
+// storeResults stores one matcher's results, then its last walk time.
+func (f *filewalker) storeResults(ctx context.Context, name string, paths []string) {
+	resultsRaw, err := json.Marshal(paths)
 	if err != nil {
 		f.slogger.Log(ctx, slog.LevelError,
 			"could not marshal filewalk results for storage",
@@ -106,15 +141,13 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 		)
 		return
 	}
-	if err := f.resultsStore.Set([]byte(f.name), resultsRaw); err != nil {
+	if err := f.resultsStore.Set([]byte(name), resultsRaw); err != nil {
 		f.slogger.Log(ctx, slog.LevelError,
 			"could not set filewalk results in storage",
 			"err", err,
 		)
 		return
 	}
-
-	span.AddEvent("walk_results_stored")
 
 	// Since we've successfully walked and stored the results, store the last walk time
 	lastWalkTimeBuffer := &bytes.Buffer{}
@@ -125,28 +158,54 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 		)
 		return
 	}
-	if err := f.resultsStore.Set(LastWalkTimeKey(f.name), lastWalkTimeBuffer.Bytes()); err != nil {
+	if err := f.resultsStore.Set(LastWalkTimeKey(name), lastWalkTimeBuffer.Bytes()); err != nil {
 		f.slogger.Log(ctx, slog.LevelError,
 			"could not set last walk time in storage",
 			"err", err,
 		)
 	}
-
-	span.AddEvent("walk_time_stored")
-
-	f.slogger.Log(ctx, slog.LevelInfo,
-		"completed filewalk",
-		"walk_duration", time.Since(walkStart).String(),
-		"error_counts", errorCounts,
-		"paths_walked", pathsWalked,
-		"dirs_skipped", dirsSkipped,
-		"files_matched", len(fileNames),
-	)
 }
 
 // LastWalkTimeKey gives the key to query the results store to retrieve the last walk time for the given filewalker.
 func LastWalkTimeKey(filewalkName string) []byte {
 	return fmt.Appendf(nil, "%s_last_walk", filewalkName)
+}
+
+// matcherSet is never modified in place; methods return a new set when it changes.
+// Sets are shared between a directory and its children during a walk.
+type matcherSet []*matcher
+
+// with returns s plus add, or s itself if add contributes nothing.
+func (s matcherSet) with(add matcherSet) matcherSet {
+	if len(add) == 0 {
+		return s
+	}
+	out := slices.Clone(s)
+	for _, m := range add {
+		if !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// withoutSkipping returns s minus matchers that skip dir, or s itself if none do.
+func (s matcherSet) withoutSkipping(dir string) matcherSet {
+	skips := func(m *matcher) bool { return m.shouldSkipDir(dir) }
+	if !slices.ContainsFunc(s, skips) {
+		return s
+	}
+	return slices.DeleteFunc(slices.Clone(s), skips)
+}
+
+func (s matcherSet) matching(path string, d fs.DirEntry) iter.Seq[*matcher] {
+	return func(yield func(*matcher) bool) {
+		for _, m := range s {
+			if m.matches(path, d) && !yield(m) {
+				return
+			}
+		}
+	}
 }
 
 func (m *matcher) shouldSkipDir(dir string) bool {
