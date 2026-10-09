@@ -201,16 +201,24 @@ func TestFilewalkManager_E2E(t *testing.T) {
 	}
 	allNames := slices.Collect(maps.Keys(expected))
 
+	seededNotDue := make(map[string]int64, len(notDue))
 	for name, ago := range notDue {
-		seedLastWalk(name, ago)
+		seededNotDue[name] = seedLastWalk(name, ago)
 	}
+	dueNames := slices.DeleteFunc(slices.Clone(allNames), func(name string) bool {
+		_, ok := notDue[name]
+		return ok
+	})
 
 	// runs on startup
 	walkStart := time.Now().Unix()
 	fm := New(k, slogger)
 	go fm.Execute()
 	t.Cleanup(func() { fm.Interrupt(nil) })
-	requireWalked(allNames, walkStart)
+	requireWalked(dueNames, walkStart)
+	for name, ts := range seededNotDue {
+		require.Equal(t, ts, lastWalkTime(name), name)
+	}
 
 	// runs on ping or direct call
 	seedAll()
