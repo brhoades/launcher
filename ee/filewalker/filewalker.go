@@ -16,7 +16,6 @@ import (
 
 	"github.com/kolide/launcher/v2/ee/agent/types"
 	"github.com/kolide/launcher/v2/ee/observability"
-	kolidefilepath "github.com/kolide/launcher/v2/pkg/filepath"
 )
 
 // filewalker stores a configured walk definition and where the results go
@@ -56,13 +55,18 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 	errorCounts := make(map[string]int)
 	var pathsWalked, dirsSkipped int
 
+	type frame struct {
+		dir    string
+		active matcherSet
+	}
+
 	for _, match := range f.spec.roots {
-		// filepath.WalkDir, but directories return a state which is passed to every child of that directory walked.
-		// Approach below uses state to track for a folder which matchers are active or can become active.
+		// Approach below uses stack to track which matchers are active or can become active.
 		//
 		// The depth-first walk terminates when all matchers are removed and no roots in walkSpec specify matchers
 		// for a child path.
-		if err := kolidefilepath.WalkDirWithState(match, newMatcherSet(), func(path string, d fs.DirEntry, err error, activeMatchers matcherSet) (matcherSet, error) {
+		var stack []frame
+		if err := filepath.WalkDir(match, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				key, expected := classifyWalkError(err)
 				errorCounts[key]++
@@ -74,14 +78,23 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 						"err", err,
 					)
 				}
-				return newMatcherSet(), nil
+				return nil
 			}
 			if ctx.Err() != nil {
 				f.slogger.Log(ctx, slog.LevelDebug, "file walk interrupted by context error")
-				return matcherSet{}, filepath.SkipAll
+				return filepath.SkipAll
 			}
 
 			pathsWalked++
+
+			parent := filepath.Dir(path)
+			for len(stack) > 0 && stack[len(stack)-1].dir != parent {
+				stack = stack[:len(stack)-1]
+			}
+			activeMatchers := newMatcherSet()
+			if len(stack) > 0 {
+				activeMatchers = stack[len(stack)-1].active
+			}
 
 			// activate holds all top-most paths at which matchers apply. They get added here from fileSpec
 			// and pruned below.
@@ -95,15 +108,16 @@ func (f *filewalker) Filewalk(ctx context.Context) {
 				// Keep descending with nothing active if another config's root lies below.
 				if activeMatchers.empty() && !f.spec.hasRootBelow(path) {
 					dirsSkipped++
-					return newMatcherSet(), fs.SkipDir
+					return fs.SkipDir
 				}
+				stack = append(stack, frame{dir: filepath.Clean(path), active: activeMatchers})
 			}
 
 			// Add this file to our results.
 			for m := range activeMatchers.matching(path, d) {
 				results[m.name] = append(results[m.name], path)
 			}
-			return activeMatchers, nil
+			return nil
 		}); err != nil {
 			// Log error, but continue on to process other root dirs
 			f.slogger.Log(ctx, slog.LevelError,
