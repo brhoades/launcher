@@ -27,6 +27,7 @@ import (
 	"github.com/kolide/kit/version"
 	"github.com/kolide/launcher/v2/ee/agent/flags/keys"
 	"github.com/kolide/launcher/v2/ee/agent/types"
+	"github.com/kolide/launcher/v2/ee/gowrapper"
 	"github.com/kolide/launcher/v2/ee/observability"
 	kolideatomic "github.com/kolide/launcher/v2/pkg/atomic"
 	"github.com/kolide/launcher/v2/pkg/osquery/runsimple"
@@ -108,7 +109,7 @@ type TufAutoupdater struct {
 	updateLock           *sync.Mutex
 	checkTicker          *time.Ticker
 	interrupt            chan struct{}
-	interrupted          atomic.Bool
+	interruptOnce        sync.Once
 	signalRestart        chan error
 	slogger              *slog.Logger
 	restartFuncs         map[autoupdatableBinary]func(context.Context) error
@@ -147,7 +148,7 @@ func NewTufAutoupdater(ctx context.Context, k types.Knapsack, metadataHttpClient
 	startTime := time.Now()
 	ta := &TufAutoupdater{
 		knapsack:          k,
-		interrupt:         make(chan struct{}, 10), // We have a buffer so we don't block on sending to this channel
+		interrupt:         make(chan struct{}),
 		signalRestart:     make(chan error, 10),    // We have a buffer so we don't block on sending to this channel
 		updateChannel:     k.UpdateChannel(),
 		initialDelayStart: startTime,
@@ -263,42 +264,54 @@ func (ta *TufAutoupdater) Execute() (err error) {
 	ta.initialDelayTimer = time.NewTimer(time.Until(ta.initialDelayEnd.Load().(time.Time)))
 	defer ta.initialDelayTimer.Stop()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// sync interrupt to ctx
+	gowrapper.Go(ctx, ta.slogger, func() {
+		select {
+		case <-ctx.Done():
+		case <-ta.interrupt:
+			cancel()
+		}
+	})
+
 	for {
-		ta.slogger.Log(context.TODO(), slog.LevelInfo,
+		ta.slogger.Log(ctx, slog.LevelInfo,
 			"checking for updates",
 		)
 		// always allow our AutoupdateDownloadSplay delay during routine checks for autoupdates
 		if err := ta.checkForUpdate(context.TODO(), binaries, true, false); err != nil {
-			observability.AutoupdateFailureCounter.Add(context.TODO(), 1)
-			ta.slogger.Log(context.TODO(), slog.LevelError,
+			observability.AutoupdateFailureCounter.Add(ctx, 1)
+			ta.slogger.Log(ctx, slog.LevelError,
 				"error checking for update",
 				"err", err,
 			)
 		} else {
-			ta.slogger.Log(context.TODO(), slog.LevelInfo,
+			ta.slogger.Log(ctx, slog.LevelInfo,
 				"completed check for update",
 			)
 		}
 
 		select {
-		case <-ta.interrupt:
-			ta.slogger.Log(context.TODO(), slog.LevelDebug,
+		case <-ctx.Done():
+			ta.slogger.Log(ctx, slog.LevelDebug,
 				"received external interrupt, stopping",
 			)
 			return nil
 		case signalRestartErr := <-ta.signalRestart:
-			ta.slogger.Log(context.TODO(), slog.LevelDebug,
+			ta.slogger.Log(ctx, slog.LevelDebug,
 				"received interrupt to restart launcher after update, stopping",
 			)
 			return signalRestartErr
 		case <-ta.initialDelayTimer.C:
-			ta.slogger.Log(context.TODO(), slog.LevelInfo,
+			ta.slogger.Log(ctx, slog.LevelInfo,
 				"exiting initial delay",
 			)
 
 			// The initial delay has ended -- perform any restart that was deferred during the delay.
-			if signalRestartErr := ta.restartIfPending(context.TODO()); signalRestartErr != nil {
-				ta.slogger.Log(context.TODO(), slog.LevelInfo,
+			if signalRestartErr := ta.restartIfPending(ctx); signalRestartErr != nil {
+				ta.slogger.Log(ctx, slog.LevelInfo,
 					"restarting launcher after deferred update at end of initial delay",
 				)
 				return signalRestartErr
@@ -349,11 +362,9 @@ func (ta *TufAutoupdater) restartIfPending(ctx context.Context) error {
 
 func (ta *TufAutoupdater) Interrupt(_ error) {
 	// Only perform shutdown tasks on first call to interrupt -- no need to repeat on potential extra calls.
-	if ta.interrupted.Swap(true) {
-		return
-	}
-
-	ta.interrupt <- struct{}{}
+	ta.interruptOnce.Do(func() {
+		close(ta.interrupt)
+	})
 }
 
 // Do satisfies the actionqueue.actor interface; it allows the control server to send
