@@ -87,7 +87,7 @@ func pathToTargetVersionExecutable(binary autoupdatableBinary, targetFilename st
 
 // AddToLibrary adds the given target file to the library for the given binary,
 // downloading and verifying it if it's not already there.
-func (ulm *updateLibraryManager) AddToLibrary(binary autoupdatableBinary, currentVersion string, targetFilename string, targetMetadata data.TargetFileMeta) error {
+func (ulm *updateLibraryManager) AddToLibrary(ctx context.Context, binary autoupdatableBinary, currentVersion string, targetFilename string, targetMetadata data.TargetFileMeta) error {
 	// Acquire lock for modifying the library
 	ulm.lock.Lock(binary)
 	defer ulm.lock.Unlock(binary)
@@ -100,7 +100,7 @@ func (ulm *updateLibraryManager) AddToLibrary(binary autoupdatableBinary, curren
 		return nil
 	}
 
-	stagedUpdatePath, err := ulm.stageAndVerifyUpdate(binary, targetFilename, targetMetadata)
+	stagedUpdatePath, err := ulm.stageAndVerifyUpdate(ctx, binary, targetFilename, targetMetadata)
 	// Remove downloaded archives after update, regardless of success -- this will run before the unlock
 	defer func() {
 		if stagedUpdatePath == "" {
@@ -110,7 +110,7 @@ func (ulm *updateLibraryManager) AddToLibrary(binary autoupdatableBinary, curren
 		if err := backoff.WaitFor(func() error {
 			return os.RemoveAll(dirToRemove) //revive:disable-line -- incorrectly flags `defer: return in a defer function has no effect`
 		}, 500*time.Millisecond, 100*time.Millisecond); err != nil {
-			ulm.slogger.Log(context.TODO(), slog.LevelWarn,
+			ulm.slogger.Log(ctx, slog.LevelWarn,
 				"could not remove temp staging directory",
 				"directory", dirToRemove,
 				"err", err,
@@ -121,7 +121,7 @@ func (ulm *updateLibraryManager) AddToLibrary(binary autoupdatableBinary, curren
 		return fmt.Errorf("could not stage update: %w", err)
 	}
 
-	if err := ulm.moveVerifiedUpdate(binary, targetFilename, stagedUpdatePath); err != nil {
+	if err := ulm.moveVerifiedUpdate(ctx, binary, targetFilename, stagedUpdatePath); err != nil {
 		return fmt.Errorf("could not move verified update: %w", err)
 	}
 
@@ -130,7 +130,7 @@ func (ulm *updateLibraryManager) AddToLibrary(binary autoupdatableBinary, curren
 
 // stageAndVerifyUpdate downloads the update indicated by `targetFilename` and verifies it against
 // the given, validated local metadata.
-func (ulm *updateLibraryManager) stageAndVerifyUpdate(binary autoupdatableBinary, targetFilename string, localTargetMetadata data.TargetFileMeta) (string, error) {
+func (ulm *updateLibraryManager) stageAndVerifyUpdate(ctx context.Context, binary autoupdatableBinary, targetFilename string, localTargetMetadata data.TargetFileMeta) (string, error) {
 	stagingDir, err := ulm.tempDir(binary, fmt.Sprintf("staged-updates-%s", versionFromTarget(binary, targetFilename)))
 	if err != nil {
 		return "", fmt.Errorf("could not create temporary directory for downloading target: %w", err)
@@ -143,7 +143,7 @@ func (ulm *updateLibraryManager) stageAndVerifyUpdate(binary autoupdatableBinary
 		// Set a high-but-reasonable default
 		timeout = 8 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Request download from mirror
@@ -206,7 +206,7 @@ func (ulm *updateLibraryManager) tempDir(binary autoupdatableBinary, pattern str
 
 // moveVerifiedUpdate untars the update and performs final checks to make sure that it's a valid, working update.
 // Finally, it moves the update to its correct versioned location in the update library for the given binary.
-func (ulm *updateLibraryManager) moveVerifiedUpdate(binary autoupdatableBinary, targetFilename string, stagedUpdate string) error {
+func (ulm *updateLibraryManager) moveVerifiedUpdate(ctx context.Context, binary autoupdatableBinary, targetFilename string, stagedUpdate string) error {
 	targetVersion := versionFromTarget(binary, targetFilename)
 	stagedVersionedDirectory, err := ulm.tempDir(binary, targetVersion)
 	if err != nil {
@@ -218,7 +218,7 @@ func (ulm *updateLibraryManager) moveVerifiedUpdate(binary autoupdatableBinary, 
 			if err := backoff.WaitFor(func() error {
 				return os.RemoveAll(stagedVersionedDirectory) //revive:disable-line -- incorrectly flags `defer: return in a defer function has no effect`
 			}, 500*time.Millisecond, 100*time.Millisecond); err != nil {
-				ulm.slogger.Log(context.TODO(), slog.LevelWarn,
+				ulm.slogger.Log(ctx, slog.LevelWarn,
 					"could not remove staged update",
 					"directory", stagedVersionedDirectory,
 					"err", err,
@@ -245,7 +245,7 @@ func (ulm *updateLibraryManager) moveVerifiedUpdate(binary autoupdatableBinary, 
 	// Validate the executable -- the executable check will occasionally time out, especially on Windows,
 	// and we aren't in a rush here, so we retry a couple times.
 	if err := backoff.WaitFor(func() error {
-		return CheckExecutable(context.TODO(), ulm.slogger, executableLocation(stagedVersionedDirectory, binary), "--version")
+		return CheckExecutable(ctx, ulm.slogger, executableLocation(stagedVersionedDirectory, binary), "--version")
 	}, 45*time.Second, 15*time.Second); err != nil {
 		return fmt.Errorf("could not verify executable after retries: %w", err)
 	}

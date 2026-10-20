@@ -91,7 +91,7 @@ type (
 //mockery:structname: Mocklibrarian
 type librarian interface {
 	Available(binary autoupdatableBinary, targetFilename string) bool
-	AddToLibrary(binary autoupdatableBinary, currentVersion string, targetFilename string, targetMetadata data.TargetFileMeta) error
+	AddToLibrary(ctx context.Context, binary autoupdatableBinary, currentVersion string, targetFilename string, targetMetadata data.TargetFileMeta) error
 	TidyLibrary(binary autoupdatableBinary, currentVersion string)
 }
 
@@ -149,7 +149,7 @@ func NewTufAutoupdater(ctx context.Context, k types.Knapsack, metadataHttpClient
 	ta := &TufAutoupdater{
 		knapsack:          k,
 		interrupt:         make(chan struct{}),
-		signalRestart:     make(chan error, 10),    // We have a buffer so we don't block on sending to this channel
+		signalRestart:     make(chan error, 10), // We have a buffer so we don't block on sending to this channel
 		updateChannel:     k.UpdateChannel(),
 		initialDelayStart: startTime,
 		pinnedVersions: map[autoupdatableBinary]string{
@@ -281,7 +281,7 @@ func (ta *TufAutoupdater) Execute() (err error) {
 			"checking for updates",
 		)
 		// always allow our AutoupdateDownloadSplay delay during routine checks for autoupdates
-		if err := ta.checkForUpdate(context.TODO(), binaries, true, false); err != nil {
+		if err := ta.checkForUpdate(ctx, binaries, true, false); err != nil {
 			observability.AutoupdateFailureCounter.Add(ctx, 1)
 			ta.slogger.Log(ctx, slog.LevelError,
 				"error checking for update",
@@ -678,7 +678,10 @@ func (ta *TufAutoupdater) checkForUpdate(ctx context.Context, binariesToCheck []
 	updatesDownloaded := make(map[autoupdatableBinary]string)
 	updateErrors := make([]error, 0)
 	for _, binary := range binariesToCheck {
-		downloadedUpdateVersion, err := ta.downloadUpdate(binary, targets, allowSplayDelay)
+		if ctx.Err() != nil {
+			break
+		}
+		downloadedUpdateVersion, err := ta.downloadUpdate(ctx, binary, targets, allowSplayDelay)
 		if err != nil {
 			updateErrors = append(updateErrors, fmt.Errorf("could not download update for %s: %w", binary, err))
 		}
@@ -771,8 +774,8 @@ func (ta *TufAutoupdater) checkForUpdate(ctx context.Context, binariesToCheck []
 // downloadUpdate will download a new release for the given binary, if available from TUF
 // and not already downloaded. If allowDelay is true, the download may be delayed according to
 // the promotion time and the knapsack.AutoupdateDownloadSplay.
-func (ta *TufAutoupdater) downloadUpdate(binary autoupdatableBinary, targets data.TargetFiles, allowDelay bool) (string, error) {
-	target, targetMetadata, err := findTarget(context.Background(), binary, targets, ta.pinnedVersions[binary], ta.updateChannel, ta.slogger)
+func (ta *TufAutoupdater) downloadUpdate(ctx context.Context, binary autoupdatableBinary, targets data.TargetFiles, allowDelay bool) (string, error) {
+	target, targetMetadata, err := findTarget(ctx, binary, targets, ta.pinnedVersions[binary], ta.updateChannel, ta.slogger)
 	if err != nil {
 		return "", fmt.Errorf("could not find appropriate target: %w", err)
 	}
@@ -800,7 +803,7 @@ func (ta *TufAutoupdater) downloadUpdate(binary autoupdatableBinary, targets dat
 
 		// The release is already available in the library and it's not our current running version --
 		// return the version to signal for a restart.
-		ta.slogger.Log(context.TODO(), slog.LevelInfo,
+		ta.slogger.Log(ctx, slog.LevelInfo,
 			"update is already available in library",
 			"binary", binary,
 			"target", target,
@@ -809,12 +812,12 @@ func (ta *TufAutoupdater) downloadUpdate(binary autoupdatableBinary, targets dat
 	}
 
 	// Determine whether we should skip this check cycle if delaying the download
-	if allowDelay && ta.shouldDelayDownload(binary, targets) {
+	if allowDelay && ta.shouldDelayDownload(ctx, binary, targets) {
 		return "", nil
 	}
 
 	// We haven't yet downloaded this release -- download it
-	if err := ta.libraryManager.AddToLibrary(binary, currentVersion, target, targetMetadata); err != nil {
+	if err := ta.libraryManager.AddToLibrary(ctx, binary, currentVersion, target, targetMetadata); err != nil {
 		return "", fmt.Errorf("could not add target %s for binary %s to library: %w", target, binary, err)
 	}
 
@@ -959,7 +962,7 @@ func ArchForPlatform(platform, arch string) string {
 // - the promotion happened longer ago than the configured splay duration
 // Otherwise, it uses a randomly selected delay offset within the splay window,
 // returning true if the current time is before the calculated delay cutoff.
-func (ta *TufAutoupdater) shouldDelayDownload(binary autoupdatableBinary, targets data.TargetFiles) bool {
+func (ta *TufAutoupdater) shouldDelayDownload(ctx context.Context, binary autoupdatableBinary, targets data.TargetFiles) bool {
 	// if the splay is disabled, we should always download immediately
 	if ta.knapsack.AutoupdateDownloadSplay() == 0 {
 		return false
@@ -971,18 +974,18 @@ func (ta *TufAutoupdater) shouldDelayDownload(binary autoupdatableBinary, target
 		"update_channel", ta.updateChannel,
 	)
 
-	releasePromotedAt := findReleasePromoteTime(context.TODO(), binary, targets, ta.updateChannel)
+	releasePromotedAt := findReleasePromoteTime(ctx, binary, targets, ta.updateChannel)
 	// if for any reason we can't determine the promote time, we should download immediately.
 	// this also covers the case where we have not published a promote time for whatever reason
 	if releasePromotedAt == 0 {
-		slogger.Log(context.TODO(), slog.LevelDebug, "no release promotion time found, will not delay download")
+		slogger.Log(ctx, slog.LevelDebug, "no release promotion time found, will not delay download")
 		return false
 	}
 
 	promoteStart := time.Unix(releasePromotedAt, 0)
 	// if promotion happened greater than our max splay threshold, we should download immediately
 	if time.Since(promoteStart) > ta.knapsack.AutoupdateDownloadSplay() {
-		slogger.Log(context.TODO(), slog.LevelDebug,
+		slogger.Log(ctx, slog.LevelDebug,
 			"promote start was longer ago than download splay, will not delay download",
 			"promote_start", promoteStart,
 		)
@@ -991,7 +994,7 @@ func (ta *TufAutoupdater) shouldDelayDownload(binary autoupdatableBinary, target
 
 	splayDelaySeconds := ta.getSplayDelaySeconds()
 	delayCutoffTime := time.Unix(releasePromotedAt+splayDelaySeconds, 0)
-	slogger.Log(context.TODO(), slog.LevelInfo,
+	slogger.Log(ctx, slog.LevelInfo,
 		"release promoted within splay time, determining download eligibility",
 		"promote_start", promoteStart.UTC(),
 		"delay_seconds", splayDelaySeconds,
