@@ -79,7 +79,7 @@ func TestAddToLibrary_WindowsACLs(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					require.NoError(t, testLibraryManager.AddToLibrary(tt.binary, "", tt.targetFile, tt.targetMeta), "expected no error adding to library")
+					require.NoError(t, testLibraryManager.AddToLibrary(t.Context(), tt.binary, "", tt.targetFile, tt.targetMeta), "expected no error adding to library")
 				}()
 			}
 

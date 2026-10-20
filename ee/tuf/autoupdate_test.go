@@ -143,8 +143,8 @@ func TestExecute_launcherUpdate(t *testing.T) {
 	mockLibraryManager.On("Available", binaryOsqueryd, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion)).Return(true).Maybe() // On subsequent iterations, no need to download again
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion)).Return(false).Once()
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion)).Return(true).Maybe() // On subsequent iterations, no need to download again
-	mockLibraryManager.On("AddToLibrary", binaryOsqueryd, tufci.OlderBinaryVersion, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion), osquerydMetadata).Return(nil).Once()
-	mockLibraryManager.On("AddToLibrary", binaryLauncher, currentLauncherVersion, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion), launcherMetadata).Return(nil).Once()
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryOsqueryd, tufci.OlderBinaryVersion, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion), osquerydMetadata).Return(nil).Once()
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryLauncher, currentLauncherVersion, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion), launcherMetadata).Return(nil).Once()
 
 	// Let the autoupdater run for a bit -- it will shut itself down after a launcher update
 	go autoupdater.Execute()
@@ -296,7 +296,7 @@ func TestExecute_osquerydUpdate(t *testing.T) {
 	// Expect that we attempt to update the library
 	mockLibraryManager.On("Available", binaryOsqueryd, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion)).Return(false)
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion)).Return(true)
-	mockLibraryManager.On("AddToLibrary", binaryOsqueryd, tufci.OlderBinaryVersion, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion), osquerydMetadata).Return(nil)
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryOsqueryd, tufci.OlderBinaryVersion, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion), osquerydMetadata).Return(nil)
 
 	// Let the autoupdater run for a bit
 	go autoupdater.Execute()
@@ -500,8 +500,8 @@ func TestExecute_withInitialDelay(t *testing.T) {
 	mockLibraryManager.On("Available", binaryOsqueryd, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion)).Return(true).Maybe()
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion)).Return(false).Once()
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion)).Return(true).Maybe()
-	mockLibraryManager.On("AddToLibrary", binaryOsqueryd, tufci.OlderBinaryVersion, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion), osquerydMetadata).Return(nil).Once()
-	mockLibraryManager.On("AddToLibrary", binaryLauncher, currentLauncherVersion, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion), launcherMetadata).Return(nil).Once()
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryOsqueryd, tufci.OlderBinaryVersion, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion), osquerydMetadata).Return(nil).Once()
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryLauncher, currentLauncherVersion, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion), launcherMetadata).Return(nil).Once()
 
 	// Let the autoupdater run -- it should download the update and defer the restart
 	go autoupdater.Execute()
@@ -701,8 +701,8 @@ func TestExecute_deferredLauncherRestartAfterInitialDelay(t *testing.T) {
 	mockLibraryManager.On("Available", binaryOsqueryd, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion)).Return(true).Maybe()
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion)).Return(false).Once()
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion)).Return(true).Maybe()
-	mockLibraryManager.On("AddToLibrary", binaryOsqueryd, tufci.OlderBinaryVersion, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion), osquerydMetadata).Return(nil).Once()
-	mockLibraryManager.On("AddToLibrary", binaryLauncher, currentLauncherVersion, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion), launcherMetadata).Return(nil).Once()
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryOsqueryd, tufci.OlderBinaryVersion, fmt.Sprintf("osqueryd-%s.tar.gz", testReleaseVersion), osquerydMetadata).Return(nil).Once()
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryLauncher, currentLauncherVersion, fmt.Sprintf("launcher-%s.tar.gz", testReleaseVersion), launcherMetadata).Return(nil).Once()
 
 	// Run Execute and capture its return value -- it should exit with a LauncherReloadNeeded error
 	// once the initial delay ends and the deferred restart is performed.
@@ -1055,7 +1055,7 @@ func TestDo(t *testing.T) {
 				}
 
 				mockLibraryManager.On("Available", autoupdatableBinary(b.Name), fmt.Sprintf("%s-%s.tar.gz", b.Name, testReleaseVersion)).Return(false)
-				mockLibraryManager.On("AddToLibrary", autoupdatableBinary(b.Name), mock.Anything, mock.Anything, mock.Anything).Return(nil)
+				mockLibraryManager.On("AddToLibrary", mock.Anything, autoupdatableBinary(b.Name), mock.Anything, mock.Anything, mock.Anything).Return(nil)
 			}
 
 			// Prepare control server request
@@ -1131,7 +1131,7 @@ func TestDo_HandlesSimultaneousUpdates(t *testing.T) {
 	autoupdater.libraryManager = mockLibraryManager
 	for _, b := range binaries {
 		mockLibraryManager.On("Available", b, fmt.Sprintf("%s-%s.tar.gz", string(b), testReleaseVersion)).Return(false)
-		mockLibraryManager.On("AddToLibrary", b, mock.Anything, mock.Anything, mock.Anything).Return(nil) // TODO once?
+		mockLibraryManager.On("AddToLibrary", mock.Anything, b, mock.Anything, mock.Anything, mock.Anything).Return(nil) // TODO once?
 	}
 
 	// Prepare control server request
@@ -1302,9 +1302,9 @@ func TestFlagsChanged_UpdateChannelChanged(t *testing.T) {
 	mockLibraryManager := NewMocklibrarian(t)
 	autoupdater.libraryManager = mockLibraryManager
 	mockLibraryManager.On("Available", binaryOsqueryd, fmt.Sprintf("%s-%s.tar.gz", binaryOsqueryd, testReleaseVersion)).Return(false)
-	mockLibraryManager.On("AddToLibrary", binaryOsqueryd, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryOsqueryd, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("%s-%s.tar.gz", binaryLauncher, testReleaseVersion)).Return(false)
-	mockLibraryManager.On("AddToLibrary", binaryLauncher, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryLauncher, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Notify that flags changed
 	autoupdater.FlagsChanged(t.Context(), keys.UpdateChannel)
@@ -1371,7 +1371,7 @@ func TestFlagsChanged_PinnedVersionChanged(t *testing.T) {
 	mockLibraryManager := NewMocklibrarian(t)
 	autoupdater.libraryManager = mockLibraryManager
 	mockLibraryManager.On("Available", binaryOsqueryd, fmt.Sprintf("%s-%s.tar.gz", binaryOsqueryd, pinnedOsquerydVersion)).Return(false)
-	mockLibraryManager.On("AddToLibrary", binaryOsqueryd, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryOsqueryd, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Notify that flags changed
 	autoupdater.FlagsChanged(t.Context(), keys.PinnedOsquerydVersion)
@@ -1514,9 +1514,9 @@ func TestFlagsChanged_AutoupdateIntervalChanged(t *testing.T) {
 	mockLibraryManager := NewMocklibrarian(t)
 	autoupdater.libraryManager = mockLibraryManager
 	mockLibraryManager.On("Available", binaryOsqueryd, fmt.Sprintf("%s-%s.tar.gz", binaryOsqueryd, testReleaseVersion)).Return(false)
-	mockLibraryManager.On("AddToLibrary", binaryOsqueryd, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryOsqueryd, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("%s-%s.tar.gz", binaryLauncher, testReleaseVersion)).Return(false)
-	mockLibraryManager.On("AddToLibrary", binaryLauncher, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryLauncher, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Notify that flags changed
 	autoupdater.FlagsChanged(t.Context(), keys.AutoupdateInterval)
@@ -1769,9 +1769,9 @@ func TestFlagsChanged_MultipleFlags(t *testing.T) {
 	mockLibraryManager := NewMocklibrarian(t)
 	autoupdater.libraryManager = mockLibraryManager
 	mockLibraryManager.On("Available", binaryOsqueryd, fmt.Sprintf("%s-%s.tar.gz", binaryOsqueryd, testReleaseVersion)).Return(false).Once()
-	mockLibraryManager.On("AddToLibrary", binaryOsqueryd, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryOsqueryd, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 	mockLibraryManager.On("Available", binaryLauncher, fmt.Sprintf("%s-%s.tar.gz", binaryLauncher, testReleaseVersion)).Return(false).Once()
-	mockLibraryManager.On("AddToLibrary", binaryLauncher, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockLibraryManager.On("AddToLibrary", mock.Anything, binaryLauncher, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	// Notify that multiple flags changed at once
 	autoupdater.FlagsChanged(t.Context(), keys.AutoupdateInterval, keys.UpdateChannel, keys.PinnedLauncherVersion)
@@ -1949,7 +1949,7 @@ func Test_shouldDelayDownloadRespectsDisabledSplay(t *testing.T) {
 		calculatedSplayDelay: &atomic.Int64{},
 	}
 
-	require.False(t, autoupdater.shouldDelayDownload(autoupdatableBinary("osqueryd"), data.TargetFiles{}))
+	require.False(t, autoupdater.shouldDelayDownload(t.Context(), autoupdatableBinary("osqueryd"), data.TargetFiles{}))
 }
 
 func Test_shouldDelayDownloadDoesNotDelayWithoutPromoteTime(t *testing.T) {
@@ -1966,8 +1966,8 @@ func Test_shouldDelayDownloadDoesNotDelayWithoutPromoteTime(t *testing.T) {
 	}
 
 	targets := getSampleTargets(t)
-	require.False(t, autoupdater.shouldDelayDownload(autoupdatableBinary("osqueryd"), targets))
-	require.False(t, autoupdater.shouldDelayDownload(autoupdatableBinary("launcher"), targets))
+	require.False(t, autoupdater.shouldDelayDownload(t.Context(), autoupdatableBinary("osqueryd"), targets))
+	require.False(t, autoupdater.shouldDelayDownload(t.Context(), autoupdatableBinary("launcher"), targets))
 }
 
 func Test_shouldDelayDownloadDoesNotDelayIfPromoteTimeExceedsSplay(t *testing.T) {
@@ -1984,8 +1984,8 @@ func Test_shouldDelayDownloadDoesNotDelayIfPromoteTimeExceedsSplay(t *testing.T)
 	}
 
 	targets := getSampleTargets(t)
-	require.False(t, autoupdater.shouldDelayDownload(autoupdatableBinary("osqueryd"), targets))
-	require.False(t, autoupdater.shouldDelayDownload(autoupdatableBinary("launcher"), targets))
+	require.False(t, autoupdater.shouldDelayDownload(t.Context(), autoupdatableBinary("osqueryd"), targets))
+	require.False(t, autoupdater.shouldDelayDownload(t.Context(), autoupdatableBinary("launcher"), targets))
 }
 
 func Test_shouldDelayDownloadDelaysIfPromotedWithinSplay(t *testing.T) {
@@ -2012,7 +2012,7 @@ func Test_shouldDelayDownloadDelaysIfPromotedWithinSplay(t *testing.T) {
 		existingTarget.Custom = &newCustomMetadata
 		targets[targetReleaseFile] = existingTarget
 
-		require.True(t, autoupdater.shouldDelayDownload(autoupdatableBinary(binary), targets))
+		require.True(t, autoupdater.shouldDelayDownload(t.Context(), autoupdatableBinary(binary), targets))
 	}
 }
 

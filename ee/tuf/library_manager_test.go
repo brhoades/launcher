@@ -120,7 +120,7 @@ func TestAddToLibrary(t *testing.T) {
 			var wg sync.WaitGroup
 			for i := 0; i < 5; i += 1 {
 				wg.Go(func() {
-					require.NoError(t, testLibraryManager.AddToLibrary(b, "", targetFile, targetMeta), "expected no error adding to library")
+					require.NoError(t, testLibraryManager.AddToLibrary(t.Context(), b, "", targetFile, targetMeta), "expected no error adding to library")
 				})
 			}
 
@@ -173,7 +173,7 @@ func TestAddToLibrary_alreadyRunning(t *testing.T) {
 			// Ask the library manager to perform the download
 			targetFilename := fmt.Sprintf("%s-%s.tar.gz", binary, currentRunningVersion)
 			require.Equal(t, currentRunningVersion, versionFromTarget(binary, targetFilename), "incorrectly formed target filename")
-			require.NoError(t, testLibraryManager.AddToLibrary(binary, currentRunningVersion, targetFilename, data.TargetFileMeta{}), "expected no error on adding already-downloaded version to library")
+			require.NoError(t, testLibraryManager.AddToLibrary(t.Context(), binary, currentRunningVersion, targetFilename, data.TargetFileMeta{}), "expected no error on adding already-downloaded version to library")
 
 			// Confirm the requested version was not downloaded
 			_, err := os.Stat(filepath.Join(updatesDirectory(binary, testBaseDir), currentRunningVersion))
@@ -221,7 +221,7 @@ func TestAddToLibrary_alreadyAdded(t *testing.T) {
 			// Ask the library manager to perform the download
 			targetFilename := fmt.Sprintf("%s-%s.tar.gz", binary, testVersion)
 			require.Equal(t, testVersion, versionFromTarget(binary, targetFilename), "incorrectly formed target filename")
-			require.NoError(t, testLibraryManager.AddToLibrary(binary, "", targetFilename, data.TargetFileMeta{}), "expected no error on adding already-downloaded version to library")
+			require.NoError(t, testLibraryManager.AddToLibrary(t.Context(), binary, "", targetFilename, data.TargetFileMeta{}), "expected no error on adding already-downloaded version to library")
 
 			// Confirm the requested version is still there
 			_, err = os.Stat(executablePath)
@@ -297,7 +297,7 @@ func TestAddToLibrary_verifyStagedUpdate_handlesInvalidFiles(t *testing.T) {
 			require.NoError(t, err, "unexpected error creating new update library manager")
 
 			// Request download
-			require.Error(t, testLibraryManager.AddToLibrary(tt.binary, "", tt.targetFile, tt.targetMeta), "expected error when library manager downloads invalid file")
+			require.Error(t, testLibraryManager.AddToLibrary(t.Context(), tt.binary, "", tt.targetFile, tt.targetMeta), "expected error when library manager downloads invalid file")
 
 			// Confirm the update was not added to the library
 			updateMatches, err := filepath.Glob(filepath.Join(updatesDirectory(tt.binary, testBaseDir), "*"))
