@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"errors"
 )
@@ -47,30 +46,5 @@ func InstallCaCerts(directory string, slog *slog.Logger) (string, error) {
 
 // getSystemCaCertPath returns the path to system CA certificates based on OS
 func getSystemCaCertPath() (string, error) {
-	var candidates []string
-
-	switch runtime.GOOS {
-	case "linux":
-		candidates = []string{
-			"/etc/ssl/certs/ca-certificates.crt",
-			"/etc/pki/tls/certs/ca-bundle.crt",
-			"/etc/ssl/ca-bundle.pem",
-			"/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
-		}
-	case "darwin":
-		candidates = []string{
-			"/etc/ssl/cert.pem",
-			"/System/Library/OpenSSL/certs/cert.pem",
-		}
-	default:
-		return "", fmt.Errorf("unsupported OS: %s", runtime.GOOS)
-	}
-
-	for _, path := range candidates {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-
 	return "", errors.New("no system CA certificates found")
 }
