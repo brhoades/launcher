@@ -740,12 +740,39 @@ func (i *OsqueryInstance) createOsquerydCommand(osquerydBinary string) (*exec.Cm
 		fmt.Sprintf("--logger_plugin=%s", KolideSaasExtensionName),
 		fmt.Sprintf("--distributed_plugin=%s", KolideSaasExtensionName),
 		"--disable_distributed=false",
-		"--distributed_interval=5",
+		"--distributed_interval=30",
 		"--pack_delimiter=:",
 		"--host_identifier=uuid",
 		"--force=true",
 		"--utc",
 		fmt.Sprintf("--tls_server_certs=%s", certs),
+		"--disable_events=false",
+		"--events_max=100000",
+		"--events_expiry=3600",
+		"--read_max=52428800",
+		"--logger_event_type=false",
+	}
+
+	// FIXME(doc why: osqueryd exits on unknown flags)
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		args = append(args,
+			"--disable_audit=false",
+			"--audit_allow_config=false",
+			"--audit_allow_fim_events=true",
+			"--audit_allow_process_events=true",
+			"--audit_allow_sockets=true",
+			"--audit_allow_user_events=false",
+			"--enable_file_events=true",
+		)
+	}
+	if runtime.GOOS == "darwin" {
+		args = append(args,
+			"--disable_endpointsecurity=true",
+			"--disable_endpointsecurity_fim=true",
+			"--es_fim_enable_open_events=true",
+			"--enable_mouse_events=false",
+			"--enable_keyboard_events=false",
+		)
 	}
 
 	if i.knapsack.WatchdogEnabled() {
