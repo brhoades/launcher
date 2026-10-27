@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -79,10 +80,11 @@ const (
 	defaultMaxBufferedLogs = 500000
 
 	// How frequently osquery should check for distributed queries to run.
+	// FIXME(stale: interval is now 30s)
 	// We set this to 5 seconds, which is more frequent than we think the
 	// server can comfortably handle, so we only forward these requests
 	// to the cloud once every 60 seconds.
-	osqueryDistributedInterval = 5
+	osqueryDistributedInterval = 30
 )
 
 var (
@@ -95,12 +97,45 @@ var (
 
 	// Osquery configuration options that we set after the osquery instance has been up and running
 	// for at least 10 minutes. These are the "normal" values. We continue to override the distributed
+	// FIXME(stale: interval is now 30s)
 	// interval to 5 seconds.
 	postStartupOsqueryConfigOptions = map[string]any{
 		"verbose":              false,
 		"distributed_interval": osqueryDistributedInterval,
 	}
 )
+
+// FIXME(doc: GOOS-gated, unknown CLI flags kill osqueryd)
+func HardcodedOsqueryOptions() map[string]any {
+	opts := map[string]any{
+		"disable_events":    false,
+		"events_max":        100000,
+		"events_expiry":     3600,
+		"read_max":          52428800,
+		"logger_event_type": false,
+	}
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		maps.Copy(opts, map[string]any{
+			"disable_audit":              false,
+			"audit_allow_config":         false,
+			"audit_allow_fim_events":     true,
+			"audit_allow_process_events": true,
+			"audit_allow_sockets":        true,
+			"audit_allow_user_events":    false,
+			"enable_file_events":         true,
+		})
+	}
+	if runtime.GOOS == "darwin" {
+		maps.Copy(opts, map[string]any{
+			"disable_endpointsecurity":     true,
+			"disable_endpointsecurity_fim": true,
+			"es_fim_enable_open_events":    true,
+			"enable_mouse_events":          false,
+			"enable_keyboard_events":       false,
+		})
+	}
+	return opts
+}
 
 // ExtensionOpts is options to be passed in NewExtension
 type ExtensionOpts struct {
@@ -669,7 +704,9 @@ func (e *Extension) generateConfigsWithReenroll(ctx context.Context, reenroll bo
 		}
 	}
 
-	config = e.setOsqueryOptions(config, configOptsToSet)
+	opts := HardcodedOsqueryOptions()
+	maps.Copy(opts, configOptsToSet)
+	config = e.setOsqueryOptions(config, opts)
 
 	// If this feature flag is set, we want to use cached data for scheduled queries that might otherwise
 	// time out. We achieve this by updating the config to point to the tables holding the cached data.

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -746,33 +748,11 @@ func (i *OsqueryInstance) createOsquerydCommand(osquerydBinary string) (*exec.Cm
 		"--force=true",
 		"--utc",
 		fmt.Sprintf("--tls_server_certs=%s", certs),
-		"--disable_events=false",
-		"--events_max=100000",
-		"--events_expiry=3600",
-		"--read_max=52428800",
-		"--logger_event_type=false",
 	}
 
-	// FIXME(doc why: osqueryd exits on unknown flags)
-	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
-		args = append(args,
-			"--disable_audit=false",
-			"--audit_allow_config=false",
-			"--audit_allow_fim_events=true",
-			"--audit_allow_process_events=true",
-			"--audit_allow_sockets=true",
-			"--audit_allow_user_events=false",
-			"--enable_file_events=true",
-		)
-	}
-	if runtime.GOOS == "darwin" {
-		args = append(args,
-			"--disable_endpointsecurity=true",
-			"--disable_endpointsecurity_fim=true",
-			"--es_fim_enable_open_events=true",
-			"--enable_mouse_events=false",
-			"--enable_keyboard_events=false",
-		)
+	hardcodedOpts := launcherosq.HardcodedOsqueryOptions()
+	for _, k := range slices.Sorted(maps.Keys(hardcodedOpts)) {
+		args = append(args, fmt.Sprintf("--%s=%v", k, hardcodedOpts[k]))
 	}
 
 	if i.knapsack.WatchdogEnabled() {
