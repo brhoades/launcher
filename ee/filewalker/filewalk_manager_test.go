@@ -341,6 +341,7 @@ func runManagerTest(t *testing.T, body func(h *managerHarness)) {
 		k := typesmocks.NewKnapsack(t)
 		k.On("FilewalkConfigStore").Return(cfgStore)
 		k.On("FilewalkResultsStore").Return(resultsStore)
+		k.On("FilewalkDueStrategy").Return(dueStrategyStrict).Maybe()
 
 		h := &managerHarness{
 			t:            t,
