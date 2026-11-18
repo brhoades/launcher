@@ -19,9 +19,12 @@ import (
 
 type (
 	Group struct {
-		slogger *slog.Logger
-		actors  []rungroupActor
+		slogger   *slog.Logger
+		actors    []rungroupActor
+		terminate func(error) bool
 	}
+
+	Option func(*Group)
 
 	rungroupActor struct {
 		name      string // human-readable identifier for the actor
@@ -40,11 +43,23 @@ const (
 	executeReturnTimeout = 5 * time.Second  // After interrupted, how long for all actors to exit their `execute` functions
 )
 
-func NewRunGroup() *Group {
-	return &Group{
-		slogger: multislogger.NewNopLogger(),
-		actors:  make([]rungroupActor, 0),
+// FIXME(undocumented)
+func WithTerminatePredicate(terminate func(error) bool) Option {
+	return func(g *Group) {
+		g.terminate = terminate
 	}
+}
+
+func NewRunGroup(opts ...Option) *Group {
+	g := &Group{
+		slogger:   multislogger.NewNopLogger(),
+		actors:    make([]rungroupActor, 0),
+		terminate: func(error) bool { return true },
+	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 func (g *Group) Add(name string, execute func() error, interrupt func(error)) {
@@ -97,8 +112,17 @@ func (g *Group) Run() error {
 		})
 	}
 
-	// Wait for the first actor to stop.
-	initialActorErr := <-actorErrors
+	// Wait until we run out of actors or until the first actor's error
+	// meets termination criteria.
+	var initialActorErr actorError
+	received := 0
+	for received < len(g.actors) {
+		initialActorErr = <-actorErrors
+		received++
+		if g.terminate(initialActorErr.err) {
+			break
+		}
+	}
 
 	g.slogger.Log(context.TODO(), slog.LevelInfo,
 		"received interrupt error from first actor -- shutting down other actors",
@@ -145,7 +169,7 @@ func (g *Group) Run() error {
 	// Wait for all other actors to stop, but only until we hit our executeReturnTimeout
 	timeoutTimer := time.NewTimer(executeReturnTimeout)
 	defer timeoutTimer.Stop()
-	for i := 1; i < cap(actorErrors); i++ {
+	for i := received; i < len(g.actors); i++ {
 		select {
 		case <-timeoutTimer.C:
 			g.slogger.Log(context.TODO(), slog.LevelDebug,

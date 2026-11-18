@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/kolide/launcher/v2/ee/gowrapper"
@@ -13,33 +14,66 @@ import (
 )
 
 type LoggedErrgroup struct {
-	errgroup *errgroup.Group
-	cancel   context.CancelFunc
-	doneCtx  context.Context // nolint:containedctx
-	slogger  *slog.Logger
+	errgroup  *errgroup.Group
+	cancel    context.CancelFunc
+	doneCtx   context.Context // nolint:containedctx
+	slogger   *slog.Logger
+	terminate func(error) bool
+
+	terminateOnce sync.Once
+	terminated    bool
+	terminateErr  error
 }
+
+type Option func(*LoggedErrgroup)
 
 const (
 	maxShutdownGoroutineDuration = 3 * time.Second
 	maxErrgroupShutdownDuration  = 30 * time.Second
 )
 
-func NewLoggedErrgroup(ctx context.Context, slogger *slog.Logger) *LoggedErrgroup {
+// When a goroutine in LoggedErrgroup exits, if this function
+// returns true the errgroup terminates.
+func WithTerminatePredicate(terminate func(error) bool) Option {
+	return func(l *LoggedErrgroup) {
+		l.terminate = terminate
+	}
+}
+
+func NewLoggedErrgroup(ctx context.Context, slogger *slog.Logger, opts ...Option) *LoggedErrgroup {
 	ctx, cancel := context.WithCancel(ctx)
 	e, doneCtx := errgroup.WithContext(ctx)
 
-	return &LoggedErrgroup{
-		errgroup: e,
-		cancel:   cancel,
-		doneCtx:  doneCtx,
-		slogger:  slogger,
+	l := &LoggedErrgroup{
+		errgroup:  e,
+		cancel:    cancel,
+		doneCtx:   doneCtx,
+		slogger:   slogger,
+		terminate: func(err error) bool { return err != nil },
 	}
+	for _, opt := range opts {
+		opt(l)
+	}
+	return l
 }
 
 // StartGoroutine starts the given goroutine in the errgroup, ensuring that we log its start and exit.
 func (l *LoggedErrgroup) StartGoroutine(ctx context.Context, goroutineName string, goroutine func() error) {
 	l.errgroup.Go(func() (err error) {
 		slogger := l.slogger.With("goroutine_name", goroutineName)
+
+		// Eat the error. Since errgroups make the goroutines they house opaque,
+		// we lose control of the background goroutines if we return a non-nil error. So we
+		// bypass a key feature of the very thing we're wrapping.
+		defer func() {
+			if l.terminate(err) {
+				l.terminateOnce.Do(func() {
+					l.terminated, l.terminateErr = true, err
+					l.cancel()
+				})
+			}
+			err = nil
+		}()
 
 		// Catch any panicking goroutines and log them. We also want to make sure
 		// we return an error from this goroutine overall if it panics.
@@ -184,7 +218,11 @@ func (l *LoggedErrgroup) Wait(ctx context.Context) error {
 
 	errChan := make(chan error, 1)
 	gowrapper.Go(ctx, l.slogger, func() {
-		errChan <- l.errgroup.Wait()
+		err := l.errgroup.Wait()
+		if l.terminated {
+			err = l.terminateErr
+		}
+		errChan <- err
 	})
 
 	// Wait to receive an error from l.errgroup.Wait(), but only until our shutdown timeout.
